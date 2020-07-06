@@ -37,11 +37,12 @@
 setwd("~/Documents/ANALYSIS/Data/calibration")
 
 library(tidyverse)
-library(AICcmodavg)
-library(bbmle)
-library(MuMIn)
-library(nlme)
-library(lme4)
+library(AICcmodavg)   # for AICc()
+library(bbmle)        # for AICctab()
+library(MuMIn)        # for model.avg(), model.sel(), get.models()
+#library(nlme)        # if GLMM was fit (was not)
+#library(lme4)        # if GLMM was fit (was not)
+library(car)          # for vif()
 
 # will eventually need core calibration data
 # note: The Excel spreadsheet is too big to read in using xlsx packages, so the main sheet will need to be exported to a csv first
@@ -99,18 +100,13 @@ ggplot(estu_data, aes(x=hp_est)) +
 
 #####################################################################################################################################################
 
-# TEST ASSUMPTIONS 
+#                                                          TEST ASSUMPTIONS 
 
-lm_global <- lm(hp_est ~ lp_est1, data=estu_data) 
-lm_global <- lm(hp_est ~ total_carc, data=estu_data)
+####################
+# DATA EXPLORATION #
+####################
+
 hist(estu_data$hp_est)
-
-plot(lm_global)
-r<-resid(lm_global)
-hist(r)
-plot(r)
-qqnorm(r)
-qqline(r)
 
 # plot the data and simulated distributions
 # observed data: 
@@ -121,18 +117,211 @@ hist((estu_data$hp_est)^(1/3), nclass=10, xlab="HP estimate cubed", main="Observ
 # simulated normal data:
 Y <- rnorm(1281, mean=mean(estu_data$hp_est), sd=sd(estu_data$hp_est))
 hist(Y, nclass=10, main="Simulated normal data", xlab="HP estimate")
-
 #X <- seq(from=0, to=30, length=200)
 #Y <- dnorm(X, mean=mean(estu_data$hp_est), sd=sd(estu_data$hp_est))
 #plot(X, Y, type="l", xlab="HP estimate", ylab="Probabilities", ylim=c(0,0.25), xlim=c(0, 30), main="Normal density curve")
 
+# poisson
 x1 <- 0:10
 y1 = dpois(x1, lambda=1)
 plot(x1, y1, type="h", main="Poisson with u = 1")
 par(op)
 
-# although cube-root transformation improves normality perhaps a bit, it still isn't optimal as it creats a bimodal distribution. 
-# i think it is likely best to 
+#### Raw data appear poisson-distributed, so will have to do detailed tests for linear model assumptions prior to proceeding with linear models
+
+
+##########################
+# MODEL ASSUMPTION TESTS #
+##########################
+
+#--------- Linearity
+ggplot(estu_data, aes(x=lp_est1, y=hp_est)) +
+  geom_point()
+
+ggplot(estu_data, aes(x=total_carc, y=hp_est)) +
+  geom_point()
+
+# both linear relationships
+
+
+
+#--------- Normal distribution
+
+lm1 <- lm(hp_est ~ lp_est1, data=estu_data)
+plot(lm1)
+  # residuals vs fitted: obvious cone-shaped spread pattern to residuals 
+  # qqplot: very mid-peaked
+  # scale-location: cone-shaped spread again
+  # residuals vs leverage: clustered, one point outside 0.5 line
+r1<-resid(lm1)
+hist(r1)
+plot(r1)
+qqnorm(r1)
+qqline(r1)
+
+
+lm2 <- lm(hp_est ~ lp_est1 + total_carc, data=estu_data)
+plot(lm2)
+  # residuals vs fitted: obvious cone-shaped spread pattern to residuals 
+  # qqplot: mid-peaked less intense than lm1 but still high
+  # scale-location: cone-shaped spread again
+  # residuals vs leverage: clustered, one point outside 0.5 line
+r2<-resid(lm2)
+hist(r2)
+plot(r2)
+qqnorm(r2)
+qqline(r2)
+
+###### shows clear violation of normal distribution 
+
+
+
+# STEP 2: LOG RESPONSE    *does not improve lm1 or lm2*
+lm1.log <- lm(log(hp_est) ~ lp_est1, data=estu_data)
+plot(lm1.log)
+  # residuals vs fitted: obvious peak spread pattern to residuals 
+  # qqplot: skewed
+  # scale-location: not bad
+  # residuals vs leverage: clustered, point outside 0.5 and 1 lines 
+r1.log<-resid(lm1.log)
+hist(r1.log)
+plot(r1.log)
+qqnorm(r1.log)
+qqline(r1.log)
+
+lm2.log <- lm(log(hp_est) ~ lp_est1 + total_carc, data=estu_data)
+plot(lm2.log)
+  # residuals vs fitted: obvious peak spread pattern to residuals 
+  # qqplot: skewed
+  # scale-location: not bad
+  # residuals vs leverage: clustered, point outside 0.5 and 1 lines 
+r2.log<-resid(lm2.log)
+hist(r2.log)
+plot(r2.log)
+qqnorm(r2.log)
+qqline(r2.log)
+
+
+# STEP 3: CUBE-ROOT RESPONSE   *better than above* 
+lm1.cube <- lm(hp_est_cube ~ lp_est1, data=estu_data)
+plot(lm1.cube)
+  # residuals vs fitted: obvious peak spread pattern to residuals 
+  # qqplot: little skewed, perhaps best so far
+  # scale-location: not bad
+  # residuals vs leverage: clustered, point outside 0.5 and 1 lines 
+r1.cube<-resid(lm1.cube)
+hist(r1.cube)
+plot(r1.cube)
+qqnorm(r1.cube)
+qqline(r1.cube)
+
+lm2.cube <- lm(hp_est_cube ~ lp_est1 + total_carc, data=estu_data)
+plot(lm2.cube)
+  # residuals vs fitted: obvious peak spread pattern to residuals 
+  # qqplot: little skewed, perhaps best so far
+  # scale-location: not bad
+  # residuals vs leverage: clustered, point outside 0.5 and 1 lines 
+r2.cube<-resid(lm2.cube)
+hist(r2.cube)
+plot(r2.cube)
+qqnorm(r2.cube)
+qqline(r2.cube)
+
+
+# if linear model is used, cube-root transformed response should be used, but this may change the relationship b/w response and predictors...
+
+
+
+#--------- Collinearity of predictors 
+
+# pairs plot
+z <- cbind(estu_data$hp_est, estu_data$lp_est1, estu_data$total_carc)
+colnames(z) <- c("HP estimate","LP estimate", "total carcs")
+cor(z)
+pairs(z)
+
+panel.cor <- function(x, y, digits=2, prefix="", cex.cor, ...)
+{
+  usr = par("usr"); on.exit(par(usr))
+  par(usr = c(0, 1, 0, 1))
+  r = cor(x, y,use="na.or.complete")
+  txt = format(c(r, 0.123456789), digits=digits)[1]
+  txt = paste(prefix, txt, sep="")
+  if(missing(cex.cor)) cex.cor = 0.8/strwidth(txt)
+  text(0.5, 0.5, txt, cex = 1.5)#cex.cor * r)
+}
+pairs(z,
+      upper.panel = panel.cor,
+      cex=1,
+      pch=16)
+
+# vif
+vif(lm2)
+
+
+###### LP estimate and total carcasses are highly correlated (r2=0.95), and vif = 9.7 is too high
+
+# NOTE: Attempted revisit with interaction lp_est*total_carc, VIF scores worstened for total_carc
+lm3 <- lm(hp_est ~ lp_est1 + total_carc + lp_est1*total_carc, data=estu_data)
+plot(lm3)
+vif(lm3)
+
+
+
+# STEP 2: Attempt center and rescale 
+estu_data <- estu_data %>% 
+  mutate(lp_est1_crs = lp_est1 - mean(lp_est1),
+    total_carc_crs = total_carc - mean(total_carc)) %>% 
+  print()
+
+# pairs plot
+z.c <- cbind(estu_data$hp_est, estu_data$lp_est1_crs, estu_data$total_carc_crs)
+colnames(z.c) <- c("HP estimate","LP estimate centered", "total carcs centered")
+cor(z.c)
+pairs(z.c)
+
+panel.cor <- function(x, y, digits=2, prefix="", cex.cor, ...)
+{
+  usr = par("usr"); on.exit(par(usr))
+  par(usr = c(0, 1, 0, 1))
+  r = cor(x, y,use="na.or.complete")
+  txt = format(c(r, 0.123456789), digits=digits)[1]
+  txt = paste(prefix, txt, sep="")
+  if(missing(cex.cor)) cex.cor = 0.8/strwidth(txt)
+  text(0.5, 0.5, txt, cex = 1.5)#cex.cor * r)
+}
+pairs(z.c,
+      upper.panel = panel.cor,
+      cex=1,
+      pch=16)
+
+# vif
+lm3 <- lm(hp_est ~ lp_est1_crs + total_carc_crs, data=estu_data)
+vif(lm3)
+
+##### No change. 
+
+# STEP 3: Assess models separately 
+lm4 <- lm(hp_est ~ total_carc, data=estu_data)
+summary(lm4)   # adj r2 = 0.95
+summary(lm1)   # adj r2 = 0.92
+
+
+#--------- Summary of model exploration:
+# - Relationships are linear 
+# - Data are non-normal: appear Poisson-distributed, or require cube-root transformation to the response variable 
+# - Predictors are highly correlated: although Decker analysis showed improved model fit when total_carc was added, this is likely because over-fitting
+# with redundant highly correlated variables occurred (VIF=9.7 and R2=0.95). In fact, preliminary model fitting to re-create analysis had model fit
+# issues when came to fitting hp_est~lp_est1+total_carcs; model weight=1.0 and <0.00001 for other models with only 1 predictor is suspicious and
+# suggests poor model fitting/over-fitting to higher paramaterized, multicollinear model. Centering did nothing to improve VIF or R2
+# - Univariate analysis shows that total_carcs is a slightly better predictor than the lp_est1 
+##--------- 
+
+##--------- Conclusions moving forward: 
+# Some options to move forward with this analysis exist: 
+# - Explore Poisson-distributed GLM (GLMM?) 
+# - 
+
 
 
 
@@ -143,33 +332,39 @@ par(op)
 
 #                                                                MODELS
 
+#################
+# LINEAR MODELS #
+#################
 
-#-------------Model formulae
+#-------------Model structure and fit
 
 # cube-root transformed linear models - these should be made from all systems pooled as it will go towards creating models for the entire system,
 # so it should include all the variability
+# while Decker cube-root transformed predictors and response, linear model assumptions only apply to the response variable so i don't think the
+# predictors should have been cube-root transformed???? 
+
+# structure: 
+
+# high precision fence count ~ (max live + cumulative dead up to max live date) + total # carcasses
+
 lm0 <- lm(hp_est_cube ~ 1, data=estu_data)
 lm1 <- lm(hp_est_cube ~ lp_est1_cube, data=estu_data)
 lm2 <- lm(hp_est_cube ~ lp_est1_cube + total_carc_cube, data=estu_data)
-
-# poisson GLM - Decker model formulae but non-linear so no cube-root transform
-glm0 <- glm(hp_est ~ 1, data=estu_data, family = poisson(link = "log"))
-glm1 <- glm(hp_est ~ lp_est1, data=estu_data, family = poisson(link = "log"))
-glm2 <- glm(hp_est ~ lp_est1 + total_carc, data=estu_data, family = poisson(link = "log"))
-
-
+lm3 <- lm(hp_est_cube ~ lp_est1, data=estu_data)
+lm4 <- lm(hp_est_cube ~ lp_est1 + total_carc, data=estu_data)
 
 #-------------Compete models 
 
-AICc(lm0, lm1, lm2, glm0, glm1, glm2)
-anova(lm0, lm1, lm2, glm0, glm1, glm2)
+AICc(lm0, lm1, lm2, lm3, lm4)
+anova(lm0, lm1, lm2, lm3, lm4)
 
 # AIC comparison table 
-cand.models <- list(lm0, lm1, lm2, glm0, glm1, glm2)
-cand.names <- c("lm0_null", "lm1", "lm2", "glm0_null", "glm1", "glm2")
+cand.models <- list(lm0, lm1, lm2, lm3, lm4)
+cand.names <- c("lm0_null", "lm1", "lm2", "lm3", "lm4")
 
 # Table of all AIC vals w weights 
-t <- AICctab(lm0, lm1, lm2, glm0, glm1, glm2, nobs=83, logLik=T, base=T, weights=T, delta=T, sort=T)
+t <- AICctab(lm0, lm1, lm2, lm3, lm4, nobs=83, logLik=T, base=T, weights=T, delta=T, sort=T)
+t_2 <- AICctab(lm0, lm3, lm4, nobs=83, logLik=T, base=T, weights=T, delta=T, sort=T)
 print(t)
 
 # export table as csv
@@ -181,6 +376,65 @@ top.set <- model.sel(cand.models)
 top.comp.models.95 <- get.models(top.set, cumsum(weight)<=0.95)
 modavg.95 <- model.avg(top.comp.models.95)
 summary(modavg.95)
+
+
+
+
+
+################
+# POISSON GLMS #
+################
+
+#-------------Model structure and fit
+
+# poisson GLM - Decker model formulae but non-linear so no cube-root transform
+glm0 <- glm(hp_est ~ 1, data=estu_data, family = poisson(link = "log"))
+glm1 <- glm(hp_est ~ lp_est1, data=estu_data, family = poisson(link = "log"))
+glm2 <- glm(hp_est ~ lp_est1 + total_carc, data=estu_data, family = poisson(link = "log"))
+glm3 <- glm(hp_est ~ lp_est1 + total_carc + lp_est1*total_carc, data=estu_data, family = poisson(link = "log"))
+
+# should this be GLMM with random effect for year and/or stream ? 
+
+
+
+#-------------Compete models 
+
+AICc(glm0, glm1, glm2)
+anova(glm0, glm1, glm2)
+
+# AIC comparison table 
+cand.models <- list(glm0, glm1, glm2, glm3)
+cand.names <- c("glm0_null", "glm1", "glm2", "glm3")
+
+# Table of all AIC vals w weights 
+t <- AICctab(glm0, glm1, glm2, glm3, nobs=83, logLik=T, base=T, weights=T, delta=T, sort=T)
+print(t)
+
+# export table as csv
+#class(t) <- "data.frame"
+#write.csv(t, "AIC_table_dec72019_propnmods.csv", row.names = T)
+
+# Select top models 95% model weight
+top.set <- model.sel(cand.models)
+top.comp.models.95 <- get.models(top.set, cumsum(weight)<=0.95)
+modavg.95 <- model.avg(top.comp.models.95)
+summary(modavg.95)
+
+
+######################
+# COMPETE ALL MODELS #
+######################
+
+# AIC comparison table 
+cand.models <- list(lm0, lm3, lm4, glm0, glm1, glm2, glm3)
+cand.names <- c("lm0_null", "lm3", "lm4", "glm0_null", "glm1", "glm2", "glm3")
+
+# Table of all AIC vals w weights 
+t <- AICctab(lm0, lm3, lm4, glm0, glm1, glm2, glm3, nobs=83, logLik=T, base=T, weights=T, delta=T, sort=T)
+print(t)
+
+
+
 
 
 
