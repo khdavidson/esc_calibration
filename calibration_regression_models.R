@@ -75,6 +75,7 @@ estu_data <- raw_estu_data %>%
     max_live_cube = max_live^(1/3),
     lp_est1_cube = lp_est1^(1/3),
     lp_est2_cube = lp_est2^(1/3)) %>%
+  mutate(usid = paste0(substr(stream, 1, 3),"-", year)) %>% 
   filter(!is.na(hp_est)) %>%
   print()
 
@@ -84,19 +85,19 @@ estu_data <- raw_estu_data %>%
 
 # check out histograms for each creek and all creeks together 
 ggplot(estu_data, aes(x=hp_est)) +
-  geom_histogram(bins=6, fill="light blue", colour="blue") +
+  geom_histogram(bins=20, fill="light blue", colour="blue") +
   labs(x="Fence count", y="Frequency") +
   facet_wrap(~stream) +
   theme_bw()
 
 ggplot(estu_data, aes(x=hp_est)) +
-  geom_histogram(bins=6, fill="light blue", colour="blue") +
+  geom_histogram(bins=20, fill="light blue", colour="blue") +
   labs(x="Fence count", y="Frequency") +
   theme_bw()
 
 # fence counts are pretty skewed. there are a lot of cases with escapement < 5000, and very few cases over 10,000
 # this may affect the model structure, as seen from scott's work where cube-root transformation was required to
-# normalize. however, we can avoid normality requirements using GLMMs 
+# normalize. however, we can avoid normality requirements using GLMMs too.
 
 #####################################################################################################################################################
 
@@ -136,17 +137,19 @@ par(op)
 
 #--------- Linearity
 ggplot(estu_data, aes(x=lp_est1, y=hp_est)) +
-  geom_point()
+  geom_point() +
+  geom_smooth(method="lm")
+# linear
 
 ggplot(estu_data, aes(x=total_carc, y=hp_est)) +
-  geom_point()
+  geom_point() +
+  geom_smooth(method="lm")
+# a little bit of a curvi-linear relationship here 
 
-# both linear relationships
 
 
 
 #--------- Normal distribution
-
 lm1 <- lm(hp_est ~ lp_est1, data=estu_data)
 plot(lm1)
   # residuals vs fitted: obvious cone-shaped spread pattern to residuals 
@@ -172,11 +175,12 @@ plot(r2)
 qqnorm(r2)
 qqline(r2)
 
-###### shows clear violation of normal distribution 
+# shows clear violation of normal distribution in both cases
 
 
-
-# STEP 2: LOG RESPONSE    *does not improve lm1 or lm2*
+###
+# LOG RESPONSE    *does not improve lm1 or lm2*
+###
 lm1.log <- lm(log(hp_est) ~ lp_est1, data=estu_data)
 plot(lm1.log)
   # residuals vs fitted: obvious peak spread pattern to residuals 
@@ -201,8 +205,9 @@ plot(r2.log)
 qqnorm(r2.log)
 qqline(r2.log)
 
-
-# STEP 3: CUBE-ROOT RESPONSE   *better than above* 
+###
+# CUBE-ROOT RESPONSE   *better than above* 
+###
 lm1.cube <- lm(hp_est_cube ~ lp_est1, data=estu_data)
 plot(lm1.cube)
   # residuals vs fitted: obvious peak spread pattern to residuals 
@@ -228,7 +233,8 @@ qqnorm(r2.cube)
 qqline(r2.cube)
 
 
-# if linear model is used, cube-root transformed response should be used, but this may change the relationship b/w response and predictors...
+# if linear model is used, cube-root transformed response should be used (Decker observation), but this may change the relationship b/w response 
+# and predictors.
 
 
 
@@ -255,23 +261,24 @@ pairs(z,
       cex=1,
       pch=16)
 
-# vif
+# VIF
 vif(lm2)
 
 
-###### LP estimate and total carcasses are highly correlated (r2=0.95), and vif = 9.7 is too high
+# SUMMARY: LP_estimate and total_carcasses are highly correlated (r2=0.95), and vif = 9.7  -->  too high
 
-# NOTE: Attempted revisit with interaction lp_est*total_carc, VIF scores worstened for total_carc
-lm3 <- lm(hp_est ~ lp_est1 + total_carc + lp_est1*total_carc, data=estu_data)
+# NOTE: With interaction lp_est*total_carc, VIF scores worstened for total_carc which makes sense as it adds structural multicollinearity 
+lm. <- lm(hp_est ~ lp_est1 + total_carc + lp_est1*total_carc, data=estu_data)
 plot(lm3)
 vif(lm3)
 
 
-
-# STEP 2: Attempt center and rescale 
+###
+# CENTER - typically for equalizing effect sizes between vastly different predictors, or for structural collinearity, but could help
+###
 estu_data <- estu_data %>% 
-  mutate(lp_est1_crs = lp_est1 - mean(lp_est1),
-    total_carc_crs = total_carc - mean(total_carc)) %>% 
+  mutate(lp_est1_crs = lp_est1-mean(lp_est1),
+    total_carc_crs = total_carc-mean(total_carc)) %>% 
   print()
 
 # pairs plot
@@ -295,14 +302,20 @@ pairs(z.c,
       cex=1,
       pch=16)
 
-# vif
-lm3 <- lm(hp_est ~ lp_est1_crs + total_carc_crs, data=estu_data)
-vif(lm3)
+# VIF
+lm.center <- lm(hp_est ~ lp_est1_crs + total_carc_crs, data=estu_data)
+vif(lm.center)
 
-##### No change. 
+# No change. Still correlated.  
 
-# STEP 3: Assess models separately 
-lm4 <- lm(hp_est ~ total_carc, data=estu_data)
+
+
+###
+# Assess models separately 
+###
+lm1 <- lm(hp_est ~ lp_est1, data=estu_data)
+lm2 <- lm(hp_est ~ lp_est1 + total_carc, data=estu_data)
+lm3 <- lm(hp_est ~ total_carc, data=estu_data)
 summary(lm4)   # adj r2 = 0.95
 summary(lm1)   # adj r2 = 0.92
 
@@ -310,23 +323,142 @@ summary(lm1)   # adj r2 = 0.92
 #--------- Summary of model exploration:
 # - Relationships are linear 
 # - Data are non-normal: appear Poisson-distributed, or require cube-root transformation to the response variable 
-# - Predictors are highly correlated: although Decker analysis showed improved model fit when total_carc was added, this is likely because over-fitting
+# - Predictors are highly correlated: although Decker showed improved model fit when total_carc was added, this is likely because over-fitting
 # with redundant highly correlated variables occurred (VIF=9.7 and R2=0.95). In fact, preliminary model fitting to re-create analysis had model fit
 # issues when came to fitting hp_est~lp_est1+total_carcs; model weight=1.0 and <0.00001 for other models with only 1 predictor is suspicious and
-# suggests poor model fitting/over-fitting to higher paramaterized, multicollinear model. Centering did nothing to improve VIF or R2
+# suggests poor model fitting/over-fitting to higher paramaterized, multicollinear model. Centering did nothing to improve VIF or R2 as multicollinearity
+# is data not structural. 
 # - Univariate analysis shows that total_carcs is a slightly better predictor than the lp_est1 
 ##--------- 
 
 ##--------- Conclusions moving forward: 
 # Some options to move forward with this analysis exist: 
 # - Explore Poisson-distributed GLM (GLMM?) 
-# - 
+# - Ensure predictive model predicts within the range of values (i.e., model data set encompasses a range of potential escapements)
+
+
+#####################################################################################################################################################
+
+#                                                             MODEL TRAINING/TESTING
+
+# Here we select 25% of the data to hold aside in order to train and test the model fits. 
+
+#############
+# SUBSAMPLE #
+#############
+# Subsample and training dataframes 
+
+# Select a random 75% of the data (47 observations*0.75 = 35)
+set.seed(100)
+estu_sub_data <- estu_data[sample(1:nrow(estu_data), 35, replace=F), ]
+
+# Extract the 25% that aren't having the model fitted to them - guinea pig dataframe 
+estu_train_data <- anti_join(estu_data, estu_sub_data, by="usid")
 
 
 
+#######################
+# FIT TRAINING MODELS #
+#######################
+# We know non-normal data so just skip lm()s as they won't be appropriate
+
+glm0 <- glm(hp_est ~ 1, data=estu_sub_data, family = poisson(link = "log"))
+
+glm1 <- glm(hp_est ~ lp_est1, data=estu_sub_data, family = poisson(link = "log"))
+summary(glm1)
+
+glm2 <- glm(hp_est ~ lp_est1 + total_carc, data=estu_sub_data, family = poisson(link = "log"))
+summary(glm2)
+
+glm3 <- glm(hp_est ~ total_carc, data=estu_sub_data, family = poisson(link = "log"))
+summary(glm3)
 
 
+###########
+# PREDICT #
+###########
 
+# glm1
+estu_train_data$predict.hpe.1 <- predict.glm(glm1, estu_train_data, type="response")
+
+ggplot(estu_train_data) +
+  geom_bar(aes(x=year, y=hp_est), stat="identity", fill="gray40", colour="black", alpha=0.5) + 
+  geom_bar(aes(x=year, y=predict.hpe.1), stat="identity", fill="light blue", colour="blue", alpha=0.5) +
+  scale_y_continuous(limits=c(0,23000)) +
+  theme_bw() +
+  facet_wrap(.~stream)
+
+
+# glm2
+estu_train_data$predict.hpe.2 <- predict.glm(glm2, estu_train_data, type="response")
+
+ggplot(estu_train_data) +
+  geom_bar(aes(x=year, y=hp_est), stat="identity", fill="gray40", colour="black", alpha=0.5) + 
+  geom_bar(aes(x=year, y=predict.hpe.2), stat="identity", fill="light blue", colour="blue", alpha=0.5) +
+  scale_y_continuous(limits=c(0,23000)) +
+  theme_bw() +
+  facet_wrap(.~stream)
+
+# glm3
+estu_train_data$predict.hpe.3 <- predict.glm(glm3, estu_train_data, type="response")
+
+ggplot(estu_train_data) +
+  geom_bar(aes(x=year, y=hp_est), position="dodge", stat="identity", fill="gray40", colour="black", alpha=0.5) + 
+  geom_bar(aes(x=year, y=predict.hpe.3), position="dodge", stat="identity", fill="light blue", colour="blue", alpha=0.5) +
+  scale_y_continuous(limits=c(0,23000)) +
+  theme_bw() +
+  facet_wrap(.~stream)
+
+
+#---------- DBEs
+# reshape for plotting and calculate DBEs
+estu_train_data <- estu_train_data %>% 
+  gather(predicted.glm, predicted.vals, c(predict.hpe.1:predict.hpe.3)) %>% 
+  mutate(diff = hp_est-predicted.vals) %>%
+  print()
+
+ggplot(estu_train_data, aes(x=year, y=diff, fill=predicted.glm, colour=predicted.glm)) +
+  geom_bar(stat="identity", alpha=0.5, position="dodge", width=0.5) +
+  geom_hline(yintercept=0) +
+  geom_text(data=estu_train_data %>% filter(predicted.glm=="predict.hpe.3"), aes(label=hp_est), colour="black", vjust=2) +
+  scale_x_continuous(breaks=seq(1990,2010,2)) +
+  labs(x="") +
+  theme_bw() +
+  facet_wrap(.~stream)
+
+# mean DBEs - average of predicted estimates from 3 model-fitted predictions compared to known escapements 
+train_sum <- estu_train_data %>%
+  group_by(stream, hp_est) %>% 
+  summarize(mean.pred=mean(predicted.vals), sd.pred=sd(predicted.vals)) %>%
+  print()
+
+ggplot(train_sum) +
+  geom_bar(aes(x=stream, y=hp_est, group=hp_est), fill="white", colour="gray80", stat="identity", position="dodge") +
+  geom_bar(aes(x=stream, y=mean.pred, group=hp_est), fill="gray60", colour="black", stat="identity", position="dodge", alpha=0.5) +
+  geom_errorbar(aes(x=stream, ymin=mean.pred-sd.pred, ymax=mean.pred+sd.pred, group=hp_est), width=0, position=position_dodge(width=0.9)) +
+  #scale_fill_distiller(palette="Spectral") +
+  #geom_text(aes(x=stream, y=mean.pred, group=hp_est, label=hp_est), colour="black", vjust=-3, position=position_dodge(width=0.9)) +
+  theme_bw()
+
+
+##################
+# COMPARE MODELS #
+##################
+AICc(glm0, glm1, glm2, glm3)
+
+# AIC comparison table 
+cand.models <- list(glm0, glm1, glm2, glm3)
+cand.names <- c("glm0_null", "glm1", "glm2", "glm3")
+
+# Table of all AIC vals w weights 
+t <- AICctab(glm0, glm1, glm2, glm3, nobs=35, logLik=T, base=T, weights=T, delta=T, sort=T)
+print(t)
+
+# can't model average because 100% of the weights are in one model 
+
+###############
+## WHAT HAVE WE LEARNED FROM THIS? 
+# These models have terrible predictive power.
 
 #####################################################################################################################################################
 
