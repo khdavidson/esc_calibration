@@ -1,17 +1,19 @@
 # calibration data exploration 
 # davidson - 23mar2020
 
+
+#####################################################################################################################################################
+
 library(vegan)
 library(tidyverse)
 
-# read data 
-setwd("~/ANALYSIS/Data")
+setwd("~/Documents/ANALYSIS/data/calibration")
+
 data_raw <- read.csv("Calibration_v3.csv")
 
+#####################################################################################################################################################
 
-#####################
-# FILTER/CLEAN DATA #
-#####################
+# CLEAN DATA 
 
 # rename. only using data from 1998 onward. Arbitrary cutoff date discussed with P. Welch 
 data <- data_raw %>% 
@@ -77,17 +79,6 @@ focal <- data %>%
 # ideas moving forward
 # - cluster analyses based on environmental covariates may show qualitative groupings
 # - glmm to model: index in a given stream (or watershed group?) ~ env covariates 
-
-
-
-
-
-l1 <- lm(data$hpe ~ data$vis_est)
-r1 <- resid(l1)
-plot(r1)
-
-
-
 
 
 
