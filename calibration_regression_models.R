@@ -267,7 +267,7 @@ vif(lm2)
 
 # SUMMARY: LP_estimate and total_carcasses are highly correlated (r2=0.95), and vif = 9.7  -->  too high
 
-# NOTE: With interaction lp_est*total_carc, VIF scores worstened for total_carc which makes sense as it adds structural multicollinearity 
+# NOTE: With interaction lp_est*total_carc, VIF scores worsened for total_carc which makes sense as it adds structural multicollinearity 
 lm. <- lm(hp_est ~ lp_est1 + total_carc + lp_est1*total_carc, data=estu_data)
 plot(lm3)
 vif(lm3)
@@ -554,7 +554,7 @@ summary(modavg.95)
 
 
 ######################
-# COMPETE ALL MODELS #
+# COMPETE ALL MODELS #   Bad mojo
 ######################
 
 # AIC comparison table 
