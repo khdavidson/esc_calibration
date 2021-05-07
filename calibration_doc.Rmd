@@ -1,7 +1,7 @@
 ---
 title: "Calibration notes"
 author: "K. Davidson"
-date: "Last update: January 2021"
+date: "Last update: Feb 2021"
 output: html_document
 ---
 
@@ -15,11 +15,29 @@ library(egg)
 library(xlsx)
 library(openxlsx)
 
-setwd("~/Documents/ANALYSIS/data")
+setwd("~/ANALYSIS/data")
 
-cal.raw <- read.xlsx("calibration_2020_KDupdate.xlsx", sheet="Calibration_v3")#***copy-pasted to wd() Jan18, may require updating***
+cal.raw <- read.xlsx("calibration_2020_KDupdate.xlsx", sheet="Calibration_v3")        #***copy-pasted to wd() Jan18, may require updating***
 
 options(scipen = 9999)
+
+# cleaning 
+cal <- cal.raw %>% 
+  mutate_at("ground_cuml_carc_above", as.numeric) %>%
+  mutate(lpe = ifelse(lpe_method=="Aerial" & !is.na(aerial_unsexed_above), peak_live_above+aerial_unsexed_above, 
+    
+    ifelse(lpe_method=="Aerial" & is.na(aerial_unsexed_above), peak_live_above,
+        
+      ifelse(lpe_method=="Ground" & is.na(ground_cuml_carc_above), peak_live_above,
+            
+        ifelse(lpe_method=="Ground" & !is.na(ground_cuml_carc_above) & hpe_method!="MR", peak_live_above+ground_cuml_carc_above, 
+              
+          ifelse(lpe_method=="Ground" & !is.na(ground_cuml_carc_above) & hpe_method=="MR", peak_live_above, NA)))))) %>%
+      
+  mutate(index = hpe/lpe) %>%
+  mutate(index_propn = lpe/hpe)
+
+cal$size <- factor(cal$size, levels=c(NA, "V. Small", "Small", "Medium", "Large", "X-Large"), ordered=T)
 ```
 
 <br>
@@ -28,11 +46,13 @@ options(scipen = 9999)
 
 <br>
 
-## Background and objectives ##     
+## **Background and objectives** ##     
 
 --------
+ 
+The foundation of this work was based on comparing the high-precision to low-precision for each system and year, and examining the range and possible reasons for variability. This was a 10-year study (~2008-2018) funded by the Southern Endowment Fund (Pacific Salmon Commission, reports online), but calibration data has been collected back to the 1980s. Very early calibration work (ca. 1980s) typically focused on small, clear streams with fences. The occasional larger system with a mark-recapture was included. During the SEF years, the database of calibration streams was expanded to include larger systems, sonar programs, and more 'problematic' systems with challenging live counting conditions. The SEF reports limit analyses only to those systems surveyed in the 10 years program. Following the completion of this, a more detailed examination of just the small, clear streams (Early Stuart) reaching back to the 1980s was completed. Through all this work, the primary variable was a 'calibration index', calculated as *I* = *LPE*/*HPE*, where LPE is the low-precision spawner population estimate (from visual counts) and HPE is the high-precision spawner population estimate (from sonar, mark-recapture or fence programs).
 
-Previous work has been done by S. Decker examining linear models applied to the Early Stuart data subset. Prior to this, P. Welch laid the foundation examining the “1:1” comparison of high-precision to low-precision and calculating each index (and associated range). 
+Although this ground work provides a key foundation, no previous work has integrated stream characteristics, environmental conditions, escapement, and stream life (spawner replenishment) into one modelling framework to test multiple hypotheses regarding variation in calibration index. Furthermore, early predictive models developed were not validated against a sub-sample of data, quantitative model fits and variable importance were not assessed, no consideration of model-averaging occurred, and no attempts were made at retrospective escapement adjustments with new a calibration index. 
 
 This document outlines work by K. Davidson and some of the rabbit holes to avoid. 
 
@@ -42,30 +62,57 @@ With specific regard to early work, all years and streams, unless wildly unrelia
 
 <br>
 
+**Temporal evolution of calibration work**
+
+The purpose and context of calibration work has evolved over time. Early entries were compiled opportunistically when a high precision estimate (HPE) and a low-precision estimate (LPE) both occurred on same system-year. Around 2008, StAD staff undertook a 10-year calibration project to expand the spatial extent of systems used for calibration to include larger streams across a variation of conditions. While the ultimate goal of both eras of calibration was the same, recent expansion to include large, "abnormal" streams artificially gives the impression that visual survey quality has declined (and the index subsequently increased) over time (Fig 1). Likewise, early calibration data points focus on Early Stuart stream fence and live counts; fence counts have high certainty, and live counts on small creeks are often more accurate. Unfortunately, recent low escapements on the Early Stuart systems preclude the ability to assess long-term intra-stream count variability.
+
+```{r, echo=F, warning=F, message=F}
+ggplot(cal%>%filter(lpe_method%in%c("Ground", "Aerial")), aes(x=year, y=index, fill=lpe_method)) +
+  geom_text(data=cal%>%filter(lpe_method%in%c("Ground", "Aerial"), index>6), aes(label=paste(gazetted_stream_name, year, sep=" ")), size=3, hjust=1.08) +
+  geom_point(shape=21, colour="black", size=3.5, alpha=0.75) +
+  scale_y_continuous(breaks=seq(0,18,by=2)) +
+  labs(x="Year", y="Index", fill="LPE method") +
+  theme_bw() +
+  theme(legend.margin=margin(t=0.1, r=0.1, b=0.1, l=0.1, unit="cm"),
+    legend.spacing.x = unit(0.1, "mm"),
+    legend.spacing.y = unit(0.1, "mm"),
+    legend.background = element_rect(colour="black"),
+    legend.position=c(0.12,0.88),
+    legend.text = element_text(size=9),
+    legend.title = element_text(size=11),
+    legend.key.size = unit(0.5, "cm")) +
+  guides(fill=guide_legend(ncol=2))
+```
+
+*Fig 1. Calibration index over time calculated as HPE/LPE. While multiplicative factors are more intuitive, the divisive (0,1 bounded) work best for GLMMs. This will be explored further in the model_development script.*
+
+<br>
+
 <br> 
 
 <br>
 
-## Methods ##
+## **Data collection and collation** ##    
 
 --------
 
-### Data collection and collation ###    
+### Rules for deriving estimates ###
+
 There has been some inconsistencies in how specific numbers for peak live, carcasses, fence counts, etc. have been collected over the course of the calibration program. In November 2020 and January 2021, S. Decker and myself discussed in depth the objective and scientific question behind the future trajectory of the calibration analysis. Given a lack of clarity and some inconsistencies over time, the following guidelines were used when collecting historical data. These details are especially important as it will likely explain why calibration data points do not match escapement estimates in the Sockeye Near Final escapement database, on NuSEDs, etc.  
 
-Up to now, the objective seems to have been to calibrate human eyeballs to machine eyeballs; thus visual counts below sonars/fences were excluded so that the counts are comparable. However, this does not make them independent measurements as one method is influencing how another method collects data. Furthermore, this is not what would be done if a system was purely roving - the live count would not stop at a fence, because the fence in question would not exist. The problem is further intensified when repeated LPEs are gathered from the same stream-year, but rely on non-independent counts, resulting in falsely-inflated sample size in the database. 
+Up to now, the objective seems to have been to calibrate human eyeballs to machine eyeballs; thus visual counts below sonars/fences were excluded so that the counts are comparable. However, it is important to note that this means one method is influencing how another method collects data. This is not what would be done if a system was purely roving - the live count would not stop at a fence, because the fence in question would not exist. The problem is further intensified when repeated LPEs are gathered from the same stream-year, but rely on non-independent counts (e.g., ground carcasses applied to aerial counts and vice-versa). Thus the inference from this calibration set is to see what would happen if a HPE method 'fell apart' mid-season, and a visual count was the only backup (e.g., sonar weir or fence blew out). Extrapolation to systems outside of this data set, or assumptions about converting a HPE system to a roving program (i.e., LPE), are not appropriate conclusions to draw from this work. 
 
 <br> 
 
 **High-precision data**    
 If a high-precision estimate (HPE) was from a:
 
-* Fence count: live through the fence is used. Typically no extrapolation or infilling is done on fences. Removals to tributaries or other systems are made (e.g., Nadina removals at Stellako) to the best of ability.
-* Sonar: live through sonar, plus tail-extrapolation and/or infilling, is used. Removals to tributaries or other systems are made (e.g., Nadina removals at Stellako) to the best of ability.
-* Mark-recapture: total population estimate minus removals to tributaries.
+* Fence count: 'raw' live through the fence is used. Typically no extrapolation or infilling is done on fences, but occasionally breached fences result in infilling (e.g., Bowron fence 1995). Removals to tributaries or other systems are made (e.g., Nadina removals at Stellako) to the best of ability, *but note these are based on visual counts*. No visual counts below the fence are included. Fecundities are typically taken from the fence and manually added to the final population estimate; likewise, these fecundities are manually added to the raw fence count as they would have been part of the absolute system count (and to make inter-year comparisons more consistent, given that some years no samples are collected and other years up to 100+ are collected). Note specific decisions about how to parse out Stellako and Nadina were difficult, and varied annualy depending on method (travel time, tagging, SONAR counts, DNA, scales). It is likely the Stellako HPEs may need refining, but early years especially are data-limited. For now, the Stellako estimates are the best, highest-precision estimates **given the data available.**
+* Sonar: 'raw' count past sonar, plus tail-extrapolation and/or infilling, is used. Removals to tributaries or other systems are made (e.g., Nadina removals at Stellako, channel removals) to the best of ability, *but again note these are based on visual counts*. No visual counts below the fence are included. Fecundities are usually already counted past sonars (as opposed to taken downstream of a sonar weir) so no manual additions are required. 
+* Mark-recapture: total population estimate minus removals to tributaries (which is done prior to the final calculation). Fecundities are included. <span style="color: red;">**An outstanding issue is how to deal with broodstock removals.**</span>
 
-Note though that the ‘final’ escapement estimate (which is compiled irrespective of this calibration work) for fences and SONARs, where there is a "hard boundary", would be created by adding the ‘live counted through fence/sonar’ + ‘live count of spawners below fence x expansion’ for a more representative escapement estimate of the whole system. However, as noted above, the objective of this calibration exercise is to estimate the total number of spawners in the system *given data limitations*, simulating what might happen if a sonar or fence blew out and a visual count was all that was able to be used. 
-Therefore, the HPE given in ‘calibration_2020_KDupdate.xlsx’ may not match the escapement estimate in ‘DFO Sockeye Escapement All Years (_date_).xlsx’, NuSEDs, etc. 
+Note though that the ‘final’ escapement estimate (which is compiled irrespective of this calibration work) for fences and SONARs, where there is a "hard boundary", would be created by adding the 'live counted through fence/sonar' + 'live count of spawners below fence' * 'expansion' for a more representative escapement estimate of the whole system. However, as noted above, the objective of this calibration exercise is to estimate the total number of spawners in the system *given data limitations*, simulating what might happen if a sonar or fence blew out and a visual count was all that was able to be used. 
+Therefore, the HPE given in 'calibration_2020_KDupdate.xlsx' may not match the Near Final escapement estimate in 'DFO Sockeye Escapement All Years (_date_).xlsx', NuSEDs, etc. 
 
 Any high-precision estimated deemed or suspected to be seriously biased (e.g., mark-recapture) should not be included in the calibration database.
 
@@ -77,28 +124,190 @@ The decisions around low-precision data, and how they correspond to the HP data 
 If an LPE is from an:
 
 * Aerial survey: aerial live count plus aerial unsexed dead.
-    + An exception to aerial unsexed dead can be made in system-years where carcasses either can't be counted (too many fish) or because extensive ground recovery efforts preclude the ability to distinguish chopped/unchopped across areas. ***In this case, ground recoveries could be added to the aerial count for a more robust LPE***. When available, aerial unsexed carcasses should always be the first choice, even if they are estimates or obviously vast underestimates. Care should be taken though to consider the implications of using ground carcasses in years where they are used both for ground and live counts, and especially in years where the ground effort is only due to the HPE method (e.g., mark recpature ground coverage is very extensive because it is a requirement of a MR, it would not be that intensive if there wasn't a huge crew required to find tags daily).
-    + It is rare to have multiple aerial surveys each system-year, but if data are available and it is of interest, cumulative aerial unsexed dead carcasses could be used. This is just an idea and has not been pursued in the current analysis.
-* Ground survey (boat, raft or walk): Peak live ground count, plus cumulative ground carcass counts, ideally up to and including the day of the live count, but sometimes carcass recoveries are behind (up to several days). The ground LPE should not include any carcasses viewed from the aircraft in any aerial surveys leading up to the peak live ground count date. It is extremely rare that unsexed carcasses are counted in ground surveys (recovered yes, but not usually unsex dead count); to my knowlege this was only available for one system-year, as such it was not considered as carcasses contributing to the LPE.
+    + Previous thoughts were that an exception to aerial unsexed dead could be made in system-years where carcasses either couldn't be counted (too many fish) or because extensive ground recovery efforts preclude the ability to distinguish chopped/unchopped across areas. In this case, ground recoveries could be added to the aerial count for a more robust LPE. **However**, the implications of adding ground carcasses to aerial surveys (and vice-versa) create issues around non-independence of observations. Furthermore, carcass recovery efforts are vastly different depending on the HPE method (MR vs. SONAR). Therefore, if carcasses were not counted from the helicopter at the same time as the aerial live count, there are no carcasses added. 
+    + It is rare to have multiple aerial surveys each system-year, but if data are available and it is of interest, cumulative aerial unsexed dead carcasses could also be used. This is just an idea and has not been pursued in the current analysis.
+* Ground survey (boat, raft or walk): Peak live ground count, plus cumulative ground carcass counts, ideally up to and including the day of the live count, but sometimes carcass recoveries are behind (up to several days). The ground LPE should not include any carcasses viewed from the aircraft in any aerial surveys leading up to the peak live ground count date. It is extremely rare that unsexed carcasses are counted in ground surveys (recovered yes, but not usually unsex dead count); to my knowlege this was only available for one system-year, as such it was not considered as carcasses contributing to the LPE. **Note that carcasses are not currently added to visual counts performed on MR-years as carcass recovery effort is abnormally high.**
 
 This is especially important to determine pre-analysis because some system recieved both ground and aerial counts in the same year for extra calibration. Therefore it is important to establish ground and aerial counts as independent so that both can be used in each system-year. 
 
 <br>
 
-**Reconciling LPEs and HPEs**    
-Low-precision estimates when a M-R with tribuates is involved - Need to determine how to treat this. 
+Other specific system-year notes are made in 'calibration_2020_KDupdate.xlsx'.
 
 <br>
 
 <br>
 
-### Model development ###    
-**State-Space Models**    
+### Data exploration ###
+
+Examing univariate trends between estimates and environmental conditions. Not data mining! :)
+
+<br>
+
+**LPE and HPE estimates**    
+Examining relationships between different estimate types and the index (LPE/HPE) they produce. At low escapements the relationship between both the HPE and LPE and HPE and Index is tighter; as escapement increases so does variability (Fig 1).
+
+```{r, warning=F, echo=F, include=F}
+hpe_lpe_plot <- function(y_var, ann_x, ann_y, ann_lab, y_lab){
+  ggplot(cal, aes(x=hpe, y=.data[[y_var]])) +
+    annotate("text", x=ann_x, y=ann_y, label=ann_lab) +
+    geom_point(shape=21, fill="blue", colour="black", stroke=1.5, size=3.5, alpha=0.8) +
+    labs(x="HPE", y=y_lab) +
+    theme_bw()
+}
+```
+
+```{r, echo=F, warning=F}
+ggarrange(hpe_lpe_plot("lpe", 0, 325000, "A", "LPE"), hpe_lpe_plot("index", 0, 17, "B", "Index"), ncol=2)
+```
+
+*Fig 1. Relationships between HPEs and a) corresponding LPEs (no expansion applied) and b) index calculated from LPE/HPE.*
+
+```{r, echo=F, include=F, warning=F, message=F}
+# Examining how much variation is explained by LPE alone 
+lm_hpe_lpe <- lm(hpe ~ lpe, data=cal)
+summary(lm_hpe_lpe)
+r_hl <- resid(lm_hpe_lpe)
+plot(r_hl)
+hist(r_hl)
+```
+
+<br>
+
+**Estimates and environmental conditions**    
+Examining relationships between estimates, index, and environmental conditions. Will not be extensive to avoid over-eager data mining, moreso to examine trends that people have previously taken as a given (e.g., Index~discharge).
+
+```{r, warning=F, echo=F, include=F}
+water_plot <- function(x_var, y_var, ann_x, ann_y, ann_lab, x_lab, y_lab, colour){
+  ggplot(cal, aes(x=.data[[x_var]], y=.data[[y_var]])) +
+    annotate("text", x=ann_x, y=ann_y, label=ann_lab) +
+    geom_point(shape=21, fill=colour, colour="black", stroke=1.5, size=3.5, alpha=0.8) +
+    scale_y_continuous(limits=c(0, ann_y)) +
+    labs(x=x_lab, y=y_lab) +
+    theme_bw()
+}
+```
+
+```{r, echo=F, warning=F}
+ggarrange(water_plot("water_discharge", "hpe", 0, 800000, "A", "Discharge", "HPE", "red"), 
+          water_plot("water_discharge", "lpe", 0, 350000, "B", "Discharge", "LPE", "orange"), 
+          water_plot("water_discharge", "index", 0, 15, "C", "Discharge", "Index", "yellow"), 
+          water_plot("water_level", "hpe", 0, 350000, "D", "Level", "HPE", "green"), 
+          water_plot("water_level", "lpe", 0, 125000, "E", "Level", "LPE", "blue"), 
+          water_plot("water_level", "index", 0, 17, "F", "Level", "Index", "purple"), ncol=3, nrow=2)
+```
+
+*Fig 2. a) HPE and b) Index versus discharge (cms) and level (m; c and d, respectively).*
+
+
+While there does not appear to be a relationship between overall abundance or index and water quantity, with the exception of perhaps Index~Discharge (Fig. 2c), this is not necessarily the case for individual systems (e.g., Stellako; Fig. 3a). Note though that the relationship holds only for discharge and not level (Fig. 3b). The relationship between level and discharge may be exponential, but this is driven by a small number of observations across several systems (Fig. 4c), and it is important to note that Environment Canada derives flow from level, likely based on an "ideal" exponential curve. Therefore only one of these variables should be used in modelling.  
+
+```{r, echo=F, warning=F, include=F}
+stellako_plot <- function(x_var, ann_x, ann_y, ann_lab, x_title){
+  ggplot(data=cal%>%filter(gazetted_stream_name=="Stellako River"), aes(x=.data[[x_var]], y=index, group=lpe_method)) +
+    geom_smooth(aes(colour=lpe_method), method="lm", alpha=0.2) +
+    geom_point(aes(fill=lpe_method), shape=21, colour="black", size=3.5, alpha=0.7) +
+    #scale_x_continuous(limits=c(4,24)) +
+    #scale_y_continuous(limits=c(0.5,4.5)) +
+    annotate("text", x=ann_x, y=ann_y, label=ann_lab) +
+    labs(x=x_title, y="Index", fill="Stellako", colour="Stellako") +
+    theme_bw() +
+    theme(legend.position=c(0.1,0.7),
+      legend.background = element_rect(colour=alpha("black", 0.5), fill=alpha("white",0.5)),
+      legend.spacing.y = unit(0.1, "mm"),
+      legend.spacing.x = unit(0.1, "mm"),
+      legend.margin=margin(t=0.1, r=0.1, b=0.1, l=0.1, unit="cm"),
+      legend.key.size = unit(0.2, "cm"),
+      legend.text = element_text(size=7),
+      legend.title = element_text(size=8))
+}
+
+flow_level<-ggplot(cal%>%filter(!is.na(water_level), !is.na(water_discharge)), aes(x=water_level, y=water_discharge, fill=gazetted_stream_name)) +
+  annotate("text", x=0, y=1010, label="C") +
+  geom_point(shape=21, colour="black", size=3.5, alpha=0.6) +
+  labs(x="Level (m)", y="Discharge (cms)", fill="System") +
+  theme_bw() +
+  theme(legend.margin=margin(t=0.1, r=0.1, b=0.1, l=0.1, unit="cm"),
+    legend.spacing.x = unit(0.1, "mm"),
+    legend.spacing.y = unit(0.1, "mm"),
+    legend.background = element_rect(colour=alpha("black", 0.5), fill=alpha("white",0.5)),
+    legend.position=c(0.35,0.6),
+    legend.text = element_text(size=7),
+    legend.title = element_text(size=8),
+    legend.key.size = unit(0.2, "cm")) +
+  guides(fill=guide_legend(ncol=2))
+```
+
+```{r, echo=F, warning=F, message=F}
+ggarrange(stellako_plot("water_discharge", 5, 4.1, "A", "Discharge (cms)"), stellako_plot("water_level", 0.1, 4.1, "B", "Level (m)"), flow_level, nrow=2, ncol=2)
+```
+
+
+*Fig 3. Relationship between a) river discharge (cms), b) river level (m) and the escapement index (HPE divded by LPE) for Stellako (1989-2019). c) Relationsip between discharge and level for paired locations, but note EC derives flow from level.*
+
+<br> 
+
+<span style="text-decoration:underline"> A note on environmentals </span>    
+
+This example highlights previous patterns between escapement and environmental factors unearthed by P. Welch and others. It is important to note the difference between dynamic and static environemntal covariates collected by StAD through time. All streams can be qualitatively classified given their size, stability, water clarity, substrate colour, canopy cover, and presence of large woody debris (LWD) relative to each other. These traits do not change annually and highlight broad differences among study systems (e.g., the size of Gluske vs. Stellako, the clarity of Tachie vs. Little Rivers, etc.); these are static environmentals, they do not represent conditions on the day of the survey. 
+In contrast, we record dynamic environmentals that are indicative of environmental conditions in 'real-time'. These include water level/flow, bankfull, brightness, cloud cover, fish visibility, water clarity (estimated depth able to see), any mention of other species affecting visual survey ability, and more recently observer efficiency (OE), a measure of the proportion of fish you think you can observe given all the environmental variables impacting visibility. 
+
+While dynamic environmentals are ideal, the data recording quality has changed substantially since the beginning of the calibration work (1988). Eary programs barely recorded any environmentals above "vis good", and OE (the ideal metric) only began around 2012. Static environmentals will be included in global models to account for some of these missing gaps, but continued calibration work *must* record environmentals consistently for future model development or retrospectives.
+
+Figure 5 illustrates some existing relationships between escapement index and environmental variables. Other environmental variables collected will be less useful. For example, while canopy cover might in theory influence an aerial flight count, flights are typically not used on systems with high canopy cover due to that issue. Furthermore, canopy cover and LWD can change among years due to wildfires, requiring re-evaluation of static variables (which puts them in the realm of dynamic variables...)
+
+```{r, echo=F, warning=F, message=F, include=F}
+# Plot function for Index ~ Survey/stream type variables
+env_plot_fx <- function(x_var, ann_x, ann_y, ann_lab, x_lab){
+  ggplot(cal%>%filter(!is.na(.data[[x_var]]), !grepl("CANT", .data[[x_var]])), aes(x=.data[[x_var]], y=index)) +
+    geom_point(shape=21, colour="black", size=3.5, fill="gray30") +
+    annotate("text", x=ann_x, y=ann_y, label=ann_lab) +
+    labs(x=x_lab, y="Index") +
+    theme_bw() + 
+    theme(legend.position=c(0.1,0.85),
+      legend.background = element_rect(colour="black"),
+      legend.spacing.y = unit(0.1, "mm"),
+      legend.spacing.x = unit(0.1, "mm"),
+      legend.margin=margin(t=0.1, r=0.1, b=0.1, l=0.1, unit="cm"),
+      legend.key.size = unit(0.5, "cm"),
+      axis.text=element_text(colour="black"))
+  }
+```
+
+```{r, echo=F, warning=F, message=F}
+ggarrange(env_plot_fx("bankfull", "0-25", 17, "A", "Bankfull (%)"), 
+          env_plot_fx("water_vis", "0.25-0.5", 17, "B", "Water visibility (m)"), 
+          env_plot_fx("size", "V. Small", 17, "C", "Stream size"), 
+          env_plot_fx("OE", 25, 17, "D", "Observer efficiency (%)"), nrow=2, ncol=2)
+```
+
+*Fig 5. Relationships between the escapement index and a) percent bankfull, b) water depth visibility, c) stream size, and d) observer efficiency.* 
+<br>
+
+<br> 
+
+One consideration is how to extrapolate results to streams outside of the calibration database. A complete inventory of streams and their qualities (whatever ends up being the important predictors from GLMM exercises) could be compiled for quick application, or they can be fed directly into the model to estimate their index. 
+
+<br>
+
+<br>
+
+## **Model development** ##
+
+-------
+
+**State-Space Models (SSM)**    
 While these, in practice, seem ideal for our calibration dataset as they can model both process and observation error in a time series, it is highly questionable as to whether they would be appropriate given the sparse time series across many systems. The main issue that arises is the assumption that an estimate at time *t* is independent, apart from dependence on time *t-1*, and that past time-steps are used to make inference about subsequent time steps. The ‘book-keeping’ process of SSMs is the information gleaned over time. As we do not have this for each system, and you cannot use the Adams River in 2010 to make inference about Chilko in 2011, unfortunately SSMs appear to be unrealistic for the dataset at the present. Further example; HPEs are only obtained for some systems on dominant years, but not always reflective of brood cycles/primary age cohorts.
 
 <br>
 
-**Alternative Models - GLMM etc.**    
+**Boosted Regression Trees (BRT)**
+
+A possibility to explore first using environmental covariates below in place of a coarser GLMM first. 
+
+<br>
+
+**Generalized Linear Mixed-Effects Models (GLMM)**    
 Since SSMs are out, the final model form is currently unknown (e.g., GLM, GAM, Bayesian, etc.). However, the theoretical framework of SSMs, i.e., the need to account for, or at least separate, both process variation and observation error, still holds. 
 
 One possible way of doing this is to incorporate covariates that account for these changes. For example, a model taking the form: 
@@ -156,90 +365,60 @@ Consider two modelling exercises, one with in-season ('dynamic') data and one wi
 
 <br>
 
-## Preliminary results ##
+## **Preliminary results** ##
 
 --------
 
-### Data exploration ###
+```{r, echo=F, include=F, message=F, warning=F}
+z <- cbind(cal$water_discharge, cal$lpe, cal$OE)
+colnames(z) <- c("discharge", "LPE", "OE")
+cor(z)
+pairs(z)
 
-```{r, warning=F, echo=F, include=F}
-# cleaning 
-cal <- cal.raw %>% 
-  mutate_at("ground_cuml_carc_above", as.numeric) %>%
-  mutate(lpe = ifelse(lpe_method=="Aerial" & !is.na(aerial_unsexed_above), peak_live_above+aerial_unsexed_above, 
-    ifelse(lpe_method=="Aerial" & is.na(aerial_unsexed_above), peak_live_above+ground_cuml_carc_above,
-      ifelse(lpe_method=="Aerial" & is.na(aerial_unsexed_above) & is.na(ground_cuml_carc_above), peak_live_above,
-        ifelse(lpe_method=="Ground" & !is.na(ground_cuml_carc_above), peak_live_above+ground_cuml_carc_above,
-          ifelse(lpe_method=="Ground" & is.na(ground_cuml_carc_above), peak_live_above, NA)))))) %>%
-  mutate(index = lpe/hpe_raw) 
+panel.cor <- function(x, y, digits=2, prefix="", cex.cor, ...)
+{
+  usr = par("usr"); on.exit(par(usr))
+  par(usr = c(0, 1, 0, 1))
+  r = cor(x, y,use="na.or.complete")
+  txt = format(c(r, 0.123456789), digits=digits)[1]
+  txt = paste(prefix, txt, sep="")
+  if(missing(cex.cor)) cex.cor = 0.8/strwidth(txt)
+  text(0.5, 0.5, txt, cex = 1.5)#cex.cor * r)
+}
+pairs(z,
+      upper.panel = panel.cor,
+      cex=1,
+      pch=16)
 ```
 
-Examing univariate trends between estimates and environmental conditions. Not data mining! :)
 
-<br>
 
-**LPE and HPE estimates**    
-Examining relationships between different estimate types and the index (LPE/HPE) they produce.
 
-```{r, warning=F, echo=F, include=F}
-hpe_lpe<-ggplot() +
-  annotate("text", x=0, y=325000, label="A") +
-  geom_point(data=cal, aes(x=hpe_raw, y=lpe), shape=21, fill="blue", colour="black", stroke=1.5, size=3.5, alpha=0.8) +
-  geom_point(data=cal, aes(x=hpe_adj, y=lpe), shape=21, fill="red", colour="black", stroke=1.5, size=3.5, alpha=0.8) +
-  labs(x="HPE", y="LPE") +
-  theme_bw()
-  
-hpe_index<-ggplot() +
-  annotate("text", x=0, y=1.1, label="B") +
-  geom_point(data=cal, aes(x=hpe_raw, y=index), shape=21, fill="blue", colour="black", stroke=1.5, size=3.5, alpha=0.8) +
-  geom_point(data=cal, aes(x=hpe_adj, y=index), shape=21, fill="red", colour="black", stroke=1.5, size=3.5, alpha=0.8) +
-  labs(x="HPE", y="Index") +
-  theme_bw()
-```
 
-```{r, echo=F, warning=F}
-ggarrange(hpe_lpe, hpe_index, ncol=2)
-```
 
-*Fig. Adjusted (red) and raw (blue) HPEs vs. a) corresponding LPEs (no expansion applied) and b) index calculated from LPE/HPE. Incomplete thus far until more HPEs are collated.*
 
-<br>
 
-**Estimates and environmental conditions**    
-Examining relationships between estimates, index, and environmental conditions. Will not be extensive to avoid over-eager data mining, moreso to examine trends that people have previously taken as a given (e.g., Index~discharge).
 
-```{r, warning=F, echo=F, include=F}
-dh<-ggplot() +
-  annotate("text", x=0, y=700000, label="A") +
-  geom_point(data=cal, aes(x=water_discharge, y=hpe_raw), shape=21, fill="blue", colour="black", stroke=1.5, size=3.5, alpha=0.8) +
-  labs(x="Discharge", y="HPE") +
-  theme_bw()
 
-di<-ggplot() +
-  annotate("text", x=0, y=1.1, label="B") +
-  geom_point(data=cal, aes(x=water_discharge, y=index), shape=21, fill="green", colour="black", stroke=1.5, size=3.5, alpha=0.8) +
-  labs(x="Discharge", y="Index") +
-  theme_bw()
 
-lh<-ggplot() +
-  annotate("text", x=0, y=350000, label="C") +
-  geom_point(data=cal, aes(x=water_level, y=hpe_raw), shape=21, fill="orange", colour="black", stroke=1.5, size=3.5, alpha=0.8) +
-  scale_y_continuous(limits=c(0,350000)) +
-  labs(x="Level", y="HPE") +
-  theme_bw()
 
-li<-ggplot() +
-  annotate("text", x=0, y=1, label="D") +
-  geom_point(data=cal, aes(x=water_level, y=index), shape=21, fill="hot pink", colour="black", stroke=1.5, size=3.5, alpha=0.8) +
-  labs(x="Level", y="Index") +
-  theme_bw()
-```
 
-```{r, echo=F, warning=F}
-ggarrange(dh, di, lh, li, ncol=2, nrow=2)
-```
 
-*Fig. a) HPE and b) Index versus discharge (cms) and level (m; c and d, respectively).*
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
