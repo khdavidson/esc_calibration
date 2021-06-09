@@ -1,8 +1,10 @@
 ---
 title: "Calibration notes"
 author: "K. Davidson"
-date: "Last update: Feb 2021"
-output: html_document
+date: "Last update: `r Sys.Date()`"
+output: 
+  html_document: 
+    df_print: kable
 ---
 
 --------
@@ -10,33 +12,56 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
+# libraries 
 library(tidyverse)
-library(egg)
-library(xlsx)
-library(openxlsx)
+library(readxl)    # to read in .xlsx files
+library(egg)       # for ggarrange()
+library(ggpubr)    # for stat_cor() in ggplot theme
+library(scales)    # for pretty_breaks()
+library(finalfit)  # for ff_glimpse()/missing values summaries
+library(naniar)    # for miss_var_summary()
+library(car)       # for vif()
+library(glmmTMB)
+#library(mgcv)     # do not run if gam is loaded. for gam() with regression splines
+#library(gam)       # do not run if mgcv is loaded. for gam() with loess
+#library(lme4) 
+library(MuMIn)     # for dredge(), model.avg(), predict(), etc.
 
+
+# read in data
 setwd("~/ANALYSIS/data")
+cal.raw <- read_excel("calibration_2020_KDupdate.xlsx", sheet="Calibration_v3")        #***copy-pasted to wd() Jan18, may require updating***
+options(scipen = 999)
 
-cal.raw <- read.xlsx("calibration_2020_KDupdate.xlsx", sheet="Calibration_v3")        #***copy-pasted to wd() Jan18, may require updating***
 
-options(scipen = 9999)
-
-# cleaning 
+# cleaning & calculating 
 cal <- cal.raw %>% 
-  mutate_at("ground_cuml_carc_above", as.numeric) %>%
+  mutate(across(c("bankfull":"water_vis"), ~ifelse(.x=="NA", NA, .x))) %>%
+  mutate_at(c("water_level", "water_discharge", "OE", "ground_cuml_carc_above", "peak_live_below", "ground_cuml_carc_above", "ground_cuml_carc_below", "aerial_unsexed_above", "aerial_unsexed_below", "ground_carcs_total_above", "hpe_adj"), as.numeric) %>%
+  mutate_at(c("system_stability", "size", "water_clarity", "substrate_shade", "canopy_cover", "large_woody_debris", "lpe_method", "bankfull", "brightness", "cloud_cover", "fish_vis", "water_vis"), as.factor) %>%
   mutate(lpe = ifelse(lpe_method=="Aerial" & !is.na(aerial_unsexed_above), peak_live_above+aerial_unsexed_above, 
-    
     ifelse(lpe_method=="Aerial" & is.na(aerial_unsexed_above), peak_live_above,
-        
       ifelse(lpe_method=="Ground" & is.na(ground_cuml_carc_above), peak_live_above,
-            
         ifelse(lpe_method=="Ground" & !is.na(ground_cuml_carc_above) & hpe_method!="MR", peak_live_above+ground_cuml_carc_above, 
-              
           ifelse(lpe_method=="Ground" & !is.na(ground_cuml_carc_above) & hpe_method=="MR", peak_live_above, NA)))))) %>%
-      
   mutate(index = hpe/lpe) %>%
-  mutate(index_propn = lpe/hpe)
-
+  mutate(sid = paste(gazetted_stream_name, year, sep="-")) %>%
+  mutate(usid = paste(gazetted_stream_name, year, lpe_method, sep="-")) %>%
+  mutate(n_row = 1:nrow(.)) %>%
+  mutate(size_recode = case_when(size=="V. Small"~1, size=="Small"~2, size=="Medium"~3, size=="Large"~4, size=="X-Large"~5)) %>%
+  mutate(water_clarity_recode = case_when(water_clarity=="Clear"~1, water_clarity=="Pt. Turbid / Tannic"~2, water_clarity=="Turbid"~3)) %>%
+  mutate(substrate_shade_recode = case_when(substrate_shade=="Light"~1, substrate_shade=="Medium"~2, substrate_shade=="Dark"~3)) %>%
+  mutate(canopy_cover_recode = case_when(canopy_cover=="Low"~1, canopy_cover=="Medium"~2, canopy_cover=="High"~3)) %>%
+  mutate(lwd_recode = case_when(large_woody_debris=="Low"~1, large_woody_debris=="Medium"~2, large_woody_debris=="High"~3)) %>%
+  mutate(bankfull_recode = case_when(bankfull=="0-25"~1, bankfull=="25-50"~2, bankfull=="50-75"~3, bankfull=="75-100"~4)) %>%
+  mutate(brightness_recode = case_when(brightness=="Dark"~1, brightness=="Medium"~2, brightness=="Bright"~3, brightness=="Full"~4)) %>%
+  mutate(cc_recode = case_when(cloud_cover=="0"~1, cloud_cover=="25"~2, cloud_cover=="50"~3, cloud_cover=="75"~4, cloud_cover=="100"~5)) %>%
+  mutate(brightness_recode = case_when(brightness=="Dark"~1, brightness=="Medium"~2, brightness=="Bright"~3, brightness=="Full"~4)) %>%
+  mutate(fish_vis_recode = case_when(fish_vis=="Low"~1, fish_vis=="Medium"~2, fish_vis=="High"~3)) %>%
+  mutate(water_vis_recode = case_when(water_vis=="0.25-0.5"~1, water_vis=="0.5-1.0"~2, water_vis=="1.0-3.0"~3, water_vis=="3.0-bottom"~4)) %>%
+  mutate_at(c("water_clarity_recode", "substrate_shade_recode", "lwd_recode", "fish_vis_recode"), as.integer) %>%
+  mutate(lpe_sc = scale(lpe, center=F, scale=T)) %>%
+  dplyr::select(sid, usid, n_row, watershed_group:lpe_sc)
 cal$size <- factor(cal$size, levels=c(NA, "V. Small", "Small", "Medium", "Large", "X-Large"), ordered=T)
 ```
 
@@ -66,25 +91,45 @@ With specific regard to early work, all years and streams, unless wildly unrelia
 
 The purpose and context of calibration work has evolved over time. Early entries were compiled opportunistically when a high precision estimate (HPE) and a low-precision estimate (LPE) both occurred on same system-year. Around 2008, StAD staff undertook a 10-year calibration project to expand the spatial extent of systems used for calibration to include larger streams across a variation of conditions. While the ultimate goal of both eras of calibration was the same, recent expansion to include large, "abnormal" streams artificially gives the impression that visual survey quality has declined (and the index subsequently increased) over time (Fig 1). Likewise, early calibration data points focus on Early Stuart stream fence and live counts; fence counts have high certainty, and live counts on small creeks are often more accurate. Unfortunately, recent low escapements on the Early Stuart systems preclude the ability to assess long-term intra-stream count variability.
 
-```{r, echo=F, warning=F, message=F}
-ggplot(cal%>%filter(lpe_method%in%c("Ground", "Aerial")), aes(x=year, y=index, fill=lpe_method)) +
-  geom_text(data=cal%>%filter(lpe_method%in%c("Ground", "Aerial"), index>6), aes(label=paste(gazetted_stream_name, year, sep=" ")), size=3, hjust=1.08) +
-  geom_point(shape=21, colour="black", size=3.5, alpha=0.75) +
+```{r, echo=F, warning=F, message=F, include=F}
+all<-ggplot(cal, aes(x=year, y=index, fill=lpe_method, size=hpe)) +
+  annotate(geom="text", x=1988, y=16, label="A") +
+  geom_text(data=cal%>%filter(index>6), aes(label=sid), size=3, hjust=1.08) +
+  geom_point(shape=21, colour="black", alpha=0.75) +
+  scale_x_continuous(breaks=seq(1988,2020, by=3)) +
   scale_y_continuous(breaks=seq(0,18,by=2)) +
-  labs(x="Year", y="Index", fill="LPE method") +
+  scale_size_continuous(range = c(2, 7)) +
+  labs(x="Year", y="Index", fill="LPE method", size="Run size") +
   theme_bw() +
   theme(legend.margin=margin(t=0.1, r=0.1, b=0.1, l=0.1, unit="cm"),
     legend.spacing.x = unit(0.1, "mm"),
     legend.spacing.y = unit(0.1, "mm"),
     legend.background = element_rect(colour="black"),
-    legend.position=c(0.12,0.88),
+    legend.position=c(0.1,0.70),
     legend.text = element_text(size=9),
     legend.title = element_text(size=11),
     legend.key.size = unit(0.5, "cm")) +
-  guides(fill=guide_legend(ncol=2))
+  guides(fill=guide_legend(ncol=2)) 
+
+paired_obs <- cal %>% group_by(sid) %>% summarize(n=n()) %>% filter(n==2) %>% pull(sid)
+
+paired<-ggplot(data=cal%>%filter(sid%in%paired_obs, !is.na(hpe)), aes(x=year, y=index, fill=lpe_method, size=hpe)) +
+  annotate(geom="text", x=2007, y=16, label="B") +
+  geom_text(data=cal%>%filter(sid%in%paired_obs, index>6), aes(label=sid), size=3, hjust=1.08) +
+  geom_point(shape=21, colour="black", alpha=0.4) +
+  scale_x_continuous(breaks=seq(2007,2020, by=2)) +
+  scale_y_continuous(breaks=seq(0,18,by=2)) +
+  scale_size_continuous(range = c(3, 5)) +
+  labs(x="Year", y="Index", fill="LPE method") +
+  theme_bw() +
+  theme(legend.position="none") 
 ```
 
-*Fig 1. Calibration index over time calculated as HPE/LPE. While multiplicative factors are more intuitive, the divisive (0,1 bounded) work best for GLMMs. This will be explored further in the model_development script.*
+```{r echo=F, warning=F, message=F}
+ggarrange(all, paired, nrow=2)
+```
+
+*Fig 1. a) Calibration index over time (calculated as HPE/LPE) for all systems. b) Calibration index over time for systems with paired ground and aerial visual counts within the same year. Size of points scaled by run size (as given by the high-precision estimate).*
 
 <br>
 
@@ -92,7 +137,7 @@ ggplot(cal%>%filter(lpe_method%in%c("Ground", "Aerial")), aes(x=year, y=index, f
 
 <br>
 
-## **Data collection and collation** ##    
+## **Methods: Data collection and collation** ##    
 
 --------
 
@@ -136,29 +181,27 @@ Other specific system-year notes are made in 'calibration_2020_KDupdate.xlsx'.
 
 <br>
 
-<br>
-
-### Data exploration ###
-
-Examing univariate trends between estimates and environmental conditions. Not data mining! :)
-
-<br>
-
-**LPE and HPE estimates**    
-Examining relationships between different estimate types and the index (LPE/HPE) they produce. At low escapements the relationship between both the HPE and LPE and HPE and Index is tighter; as escapement increases so does variability (Fig 1).
+**LPEs and HPEs**    
+Examining relationships between different estimate types and the index (LPE/HPE) they produce. At low escapements the relationship between both the HPE and LPE and HPE and Index is tighter; as escapement increases so does variability (Fig 1), but when assessing univariate relationships the LPE explains 87% of the variation in HPE alone. 
 
 ```{r, warning=F, echo=F, include=F}
-hpe_lpe_plot <- function(y_var, ann_x, ann_y, ann_lab, y_lab){
-  ggplot(cal, aes(x=hpe, y=.data[[y_var]])) +
+hpe_lpe_plot <- function(y_var, x_var, ann_x, ann_y, ann_lab, y_lab, x_lab){
+  ggplot(cal, aes(x=.data[[x_var]], y=.data[[y_var]])) +
     annotate("text", x=ann_x, y=ann_y, label=ann_lab) +
-    geom_point(shape=21, fill="blue", colour="black", stroke=1.5, size=3.5, alpha=0.8) +
-    labs(x="HPE", y=y_lab) +
-    theme_bw()
+    geom_point(shape=21, fill="blue", colour="black", stroke=1.2, size=2, alpha=0.8) +
+    geom_smooth(colour="red", method="lm", se=F) +
+    labs(x=x_lab, y=y_lab) +
+    theme_bw() +
+    theme(legend.position = "bottom") +
+    stat_cor(aes(label=..rr.label..), size=3, label.y=ann_y-(ann_y/10), label.x=ann_x-(ann_x/10), show.legend=F, r.accuracy=0.01) +
+    stat_cor(aes(label=..p.label..), size=3, label.y=ann_y-(ann_y/5), label.x=ann_x-(ann_x/7), show.legend=F, p.accuracy=0.001)
 }
 ```
 
-```{r, echo=F, warning=F}
-ggarrange(hpe_lpe_plot("lpe", 0, 325000, "A", "LPE"), hpe_lpe_plot("index", 0, 17, "B", "Index"), ncol=2)
+```{r, echo=F, warning=F, message=F}
+ggarrange(hpe_lpe_plot("hpe", "lpe", 0, 600000, "A", "HPE", "LPE"), 
+          hpe_lpe_plot("index", "hpe", 0, 17, "B", "Index", "HPE"), 
+          hpe_lpe_plot("index", "lpe", 250000, 17, "C", "Index", "LPE"), ncol=2, nrow=2)
 ```
 
 *Fig 1. Relationships between HPEs and a) corresponding LPEs (no expansion applied) and b) index calculated from LPE/HPE.*
@@ -170,98 +213,453 @@ summary(lm_hpe_lpe)
 r_hl <- resid(lm_hpe_lpe)
 plot(r_hl)
 hist(r_hl)
+qqnorm(r_hl)
+qqline(r_hl)
 ```
-
-<br>
-
-**Estimates and environmental conditions**    
-Examining relationships between estimates, index, and environmental conditions. Will not be extensive to avoid over-eager data mining, moreso to examine trends that people have previously taken as a given (e.g., Index~discharge).
-
-```{r, warning=F, echo=F, include=F}
-water_plot <- function(x_var, y_var, ann_x, ann_y, ann_lab, x_lab, y_lab, colour){
-  ggplot(cal, aes(x=.data[[x_var]], y=.data[[y_var]])) +
-    annotate("text", x=ann_x, y=ann_y, label=ann_lab) +
-    geom_point(shape=21, fill=colour, colour="black", stroke=1.5, size=3.5, alpha=0.8) +
-    scale_y_continuous(limits=c(0, ann_y)) +
-    labs(x=x_lab, y=y_lab) +
-    theme_bw()
-}
-```
-
-```{r, echo=F, warning=F}
-ggarrange(water_plot("water_discharge", "hpe", 0, 800000, "A", "Discharge", "HPE", "red"), 
-          water_plot("water_discharge", "lpe", 0, 350000, "B", "Discharge", "LPE", "orange"), 
-          water_plot("water_discharge", "index", 0, 15, "C", "Discharge", "Index", "yellow"), 
-          water_plot("water_level", "hpe", 0, 350000, "D", "Level", "HPE", "green"), 
-          water_plot("water_level", "lpe", 0, 125000, "E", "Level", "LPE", "blue"), 
-          water_plot("water_level", "index", 0, 17, "F", "Level", "Index", "purple"), ncol=3, nrow=2)
-```
-
-*Fig 2. a) HPE and b) Index versus discharge (cms) and level (m; c and d, respectively).*
-
-
-While there does not appear to be a relationship between overall abundance or index and water quantity, with the exception of perhaps Index~Discharge (Fig. 2c), this is not necessarily the case for individual systems (e.g., Stellako; Fig. 3a). Note though that the relationship holds only for discharge and not level (Fig. 3b). The relationship between level and discharge may be exponential, but this is driven by a small number of observations across several systems (Fig. 4c), and it is important to note that Environment Canada derives flow from level, likely based on an "ideal" exponential curve. Therefore only one of these variables should be used in modelling.  
-
-```{r, echo=F, warning=F, include=F}
-stellako_plot <- function(x_var, ann_x, ann_y, ann_lab, x_title){
-  ggplot(data=cal%>%filter(gazetted_stream_name=="Stellako River"), aes(x=.data[[x_var]], y=index, group=lpe_method)) +
-    geom_smooth(aes(colour=lpe_method), method="lm", alpha=0.2) +
-    geom_point(aes(fill=lpe_method), shape=21, colour="black", size=3.5, alpha=0.7) +
-    #scale_x_continuous(limits=c(4,24)) +
-    #scale_y_continuous(limits=c(0.5,4.5)) +
-    annotate("text", x=ann_x, y=ann_y, label=ann_lab) +
-    labs(x=x_title, y="Index", fill="Stellako", colour="Stellako") +
-    theme_bw() +
-    theme(legend.position=c(0.1,0.7),
-      legend.background = element_rect(colour=alpha("black", 0.5), fill=alpha("white",0.5)),
-      legend.spacing.y = unit(0.1, "mm"),
-      legend.spacing.x = unit(0.1, "mm"),
-      legend.margin=margin(t=0.1, r=0.1, b=0.1, l=0.1, unit="cm"),
-      legend.key.size = unit(0.2, "cm"),
-      legend.text = element_text(size=7),
-      legend.title = element_text(size=8))
-}
-
-flow_level<-ggplot(cal%>%filter(!is.na(water_level), !is.na(water_discharge)), aes(x=water_level, y=water_discharge, fill=gazetted_stream_name)) +
-  annotate("text", x=0, y=1010, label="C") +
-  geom_point(shape=21, colour="black", size=3.5, alpha=0.6) +
-  labs(x="Level (m)", y="Discharge (cms)", fill="System") +
-  theme_bw() +
-  theme(legend.margin=margin(t=0.1, r=0.1, b=0.1, l=0.1, unit="cm"),
-    legend.spacing.x = unit(0.1, "mm"),
-    legend.spacing.y = unit(0.1, "mm"),
-    legend.background = element_rect(colour=alpha("black", 0.5), fill=alpha("white",0.5)),
-    legend.position=c(0.35,0.6),
-    legend.text = element_text(size=7),
-    legend.title = element_text(size=8),
-    legend.key.size = unit(0.2, "cm")) +
-  guides(fill=guide_legend(ncol=2))
-```
-
-```{r, echo=F, warning=F, message=F}
-ggarrange(stellako_plot("water_discharge", 5, 4.1, "A", "Discharge (cms)"), stellako_plot("water_level", 0.1, 4.1, "B", "Level (m)"), flow_level, nrow=2, ncol=2)
-```
-
-
-*Fig 3. Relationship between a) river discharge (cms), b) river level (m) and the escapement index (HPE divded by LPE) for Stellako (1989-2019). c) Relationsip between discharge and level for paired locations, but note EC derives flow from level.*
 
 <br> 
 
 <span style="text-decoration:underline"> A note on environmentals </span>    
 
-This example highlights previous patterns between escapement and environmental factors unearthed by P. Welch and others. It is important to note the difference between dynamic and static environemntal covariates collected by StAD through time. All streams can be qualitatively classified given their size, stability, water clarity, substrate colour, canopy cover, and presence of large woody debris (LWD) relative to each other. These traits do not change annually and highlight broad differences among study systems (e.g., the size of Gluske vs. Stellako, the clarity of Tachie vs. Little Rivers, etc.); these are static environmentals, they do not represent conditions on the day of the survey. 
+The plots in the appendix highlight previous patterns between escapement and environmental factors unearthed by P. Welch and others. It is important to note the difference between dynamic and static environemntal covariates collected by StAD through time. All streams can be qualitatively classified given their size, stability, water clarity, substrate colour, canopy cover, and presence of large woody debris (LWD) relative to each other. These traits do not change annually and highlight broad differences among study systems (e.g., the size of Gluske vs. Stellako, the clarity of Tachie vs. Little Rivers, etc.); these are static environmentals, they do not represent conditions on the day of the survey. 
 In contrast, we record dynamic environmentals that are indicative of environmental conditions in 'real-time'. These include water level/flow, bankfull, brightness, cloud cover, fish visibility, water clarity (estimated depth able to see), any mention of other species affecting visual survey ability, and more recently observer efficiency (OE), a measure of the proportion of fish you think you can observe given all the environmental variables impacting visibility. 
 
 While dynamic environmentals are ideal, the data recording quality has changed substantially since the beginning of the calibration work (1988). Eary programs barely recorded any environmentals above "vis good", and OE (the ideal metric) only began around 2012. Static environmentals will be included in global models to account for some of these missing gaps, but continued calibration work *must* record environmentals consistently for future model development or retrospectives.
 
-Figure 5 illustrates some existing relationships between escapement index and environmental variables. Other environmental variables collected will be less useful. For example, while canopy cover might in theory influence an aerial flight count, flights are typically not used on systems with high canopy cover due to that issue. Furthermore, canopy cover and LWD can change among years due to wildfires, requiring re-evaluation of static variables (which puts them in the realm of dynamic variables...)
+Some existing relationships between escapement index and environmental variables are given in the 'Data Exploration' section below. Some environmental variables collected will be less useful. For example, while canopy cover might in theory influence an aerial flight count, flights are typically not used on systems with high canopy cover due to that issue. Furthermore, canopy cover and LWD can change among years due to wildfires, requiring re-evaluation of static variables (which puts them in the realm of dynamic variables...)
 
-```{r, echo=F, warning=F, message=F, include=F}
-# Plot function for Index ~ Survey/stream type variables
-env_plot_fx <- function(x_var, ann_x, ann_y, ann_lab, x_lab){
+<br> 
+
+One consideration is how to extrapolate results to streams outside of the calibration database. A complete inventory of streams and their qualities (whatever ends up being the important predictors from GLMM exercises) could be compiled for quick application, or they can be fed directly into the model to estimate their index. 
+
+<br>
+
+<br>
+
+## **Methods: Model development and considerations** ##
+
+-------
+
+### Bayesian/machine-learning models ###
+
+**State-Space Models (SSM)**    
+While these, in practice, seem ideal for our calibration dataset as they can model both process and observation error in a time series, it is highly questionable as to whether they would be appropriate given the sparse time series across many systems. The main issue that arises is the assumption that an estimate at time *t* is independent, apart from dependence on time *t-1*, and that past time-steps are used to make inference about subsequent time steps. The ‘book-keeping’ process of SSMs is the information gleaned over time. As we do not have this for each system, and you cannot use the Adams River in 2010 to make inference about Chilko in 2011, unfortunately SSMs appear to be unrealistic for the dataset at the present. Further example; HPEs are only obtained for some systems on dominant years, but not always reflective of brood cycles/primary age cohorts.
+
+<br>
+
+**Boosted Regression Trees (BRT)**   
+Considered, but as with SSMs, a lot of data are required and it is typically a model used for a time series as the machine-learning patterns are used to train the model over time. As with SSMs, this should be considered for future analyses if sample size/temporal resolution increase.  
+
+<br>
+
+### Traditional models ###
+
+Since SSMs and BRTs are out, the final model form is currently unknown (e.g., GLM, GAM, etc.). However, the theoretical framework of SSMs, i.e., the need to account for, or at least separate, both process variation and observation error, still holds. One possible way of doing this is might be to incorporate covariates that account for these changes. For example, a simple model: 
+
+Index ~ quantity of fish (LPE) + LPE_method + water quantity vars + water quality vars + stream characteristics + *additional species* + (1|year)
+
+Recall that there are two levels of covariate measurement: system and system-year. 
+
+<br>
+
+**Enumeration covariates**
+
+* LPE: The better predictor would likely be HPE, but in legitimate, non-calibration years, this wouldn't be available. Therefore use LPE.   
+  + or, Spawner density: density of spawners, or available spawn habitat. Could potentially replace stream_size, although these capture slightly different aspects. Stream_Size accounts for difficulties counting large bodies of water well, and the potential to miss/double count fish; density accounts for large runs packed into small amount of spawn habitat that are difficult to count, particularly if stacked vertically. **However may be difficult to estimate given current state of data recording**. 
+* LPE_method: differences between aerial and ground surveys have been noted for different systems. This analysis needs to be re-confirmed. 
+
+<br>
+
+**Fixed environmental covariates**    
+Note these will be the bottleneck and likely be the cause for reduction of the calibration dataset, particularly water quantity. 
+Water quantity. To note, should discharge (or some quantitative water feature, e.g., level) be used, consider calculating it as a % deviance from historical mean. This could better capture high water events that impact visual counting, although could eliminate the relative difference among streams (e.g., how the Harrison is way bigger than Gluske). Perhaps both should be included?
+
+* water quantity: either discharge, level, bankfull, or some measure in-season of water quantity    
+* water quality: either fish vis, water vis (in-season) or broad designations ('static', e.g., turbid/tannic, clear, etc.) 
+* stream characteristics: static variable of relative stream size to account for EStu tribs vs. Stellako (as example). **Right now this exists as categorical/factor data, could be made more robust by extracting approximate wetted widths from Google Earth, especially if historical images exist (ability to detect/test if major historical changes have occurred over time).**. Also includes LWD, canopy cover, etc.    
+* intraspp: likely binary dummy variable noting if a stream has a significant presence of other confounding species that would affect counts (e.g., Kokanee, pink years, Chum on Harrison, etc.).    
+* Tied into these are also survey data such as OE. Unfortunately OE only exists for a small sub-set, but consider re-running subset of models with OE covar to test its predictive ability relative to other in-season variables. 
+
+<br>
+
+**Random effects**
+
+* year: accounts for other annual variables - changes to landscapes (e.g., wildfire removing shadows), undergrowth change over time, log jams, etc. that we can't quantify. Also potential changes over time to runs and systems (e.g., run size/cyclicity, spawn timing, residence time, or sex ratios not explicitly captured by LPE).
+
+<br>
+
+**Other covariates**
+
+* While substrate darkness, woody debris, number of pools, overhanging bank veg, etc. are likely natural influences on visual counts, these cannot be quantified each year. It is possible a random effect, or ordinate ‘all-encompassing’ static ‘system complexity’ variable can be created to amalgamate multiple variables into one (even just an "ease of counting" variable, where all staff rank systems).
+* <span style="color: red;">Residence time - Large implications for visual count as most only get 1 flight (or at least, if 2 flights, the 2nd is typically due to missing POS on the first one, and one point estimate is still used). Consider this more - how to incorporate?</span>    
+
+<br>
+
+<br>
+
+<br>
+
+## **Preliminary results** ##
+
+--------
+
+<br>
+
+### 0. Missing values ###
+
+Unfortunately, not all covariates are available for all years/systems of data (Figure 6). While the static environmental variables inherently have no missing values, the dynamic (and likely more representative) environmental variables have many missing values, often confounded with time. For example, OE was only recorded from 2012 onward; after 2012 OE values are MCAR, while prior to 2012 they are MNAR (Fig 6).
+
+An overview of missing data shows that only n=27 observations have a full set of observations for the dynamic environmental covariates, spanning from 2009-2018. While some of these are related, it is difficult to infer/infill missing values as they are specific to stream types, water conditions, etc. 
+
+```{r echo=F, warning=F, mesage=F, include=F}
+# Create summary df of all environmental covariates available and a system-year grouping variable
+## with the exception of water level - discharge is derived from level so they are basically exactly the same, and there are more flow records than level. 
+covar.table <- cal %>% 
+  select(usid, year, system_stability:large_woody_debris, water_discharge, bankfull:OE, lpe_method, lpe) %>% 
+  print()
+
+#------- ALL ENVIRO COVARS
+# Drop all rows with a missing value in any of the covariates as above (i.e., only complete data retained)
+covar.drop <- covar.table %>%
+  drop_na()%>%
+  print()
+# n=27 full datasets 
+
+# Summarize where missing values occur for plotting
+covar.miss <- covar.table %>%
+  group_by(year, usid) %>% 
+  miss_var_summary(add_cumsum=T) %>%
+  mutate(group = ifelse(variable%in%c("system_stability","size","water_clarity","substrate_shade","canopy_cover","large_woody_debris"), "Static", ifelse(variable%in%c("bankfull", "brightness", "cloud_cover", "fish_vis", "water_vis", "OE", "water_discharge", "lpe_method", "lpe"), "Dynamic", "Other"))) %>%
+  print()
+covar.miss$variable <- factor(covar.miss$variable, levels=c("system_stability", "size", "water_clarity", "substrate_shade", "canopy_cover", "large_woody_debris", "lpe_method", "lpe", "bankfull", "brightness", "cloud_cover", "fish_vis", "water_vis", "OE", "water_discharge"))
+```
+
+```{r echo=F, warning=F, message=F}
+ggplot() +
+  geom_point(data=covar.miss%>%filter(n_miss==0, group!="Other"), aes(x=variable, y=reorder(usid, -year), colour=group), alpha=0.3) +
+  labs(y="survey", x="covariates") +
+  theme_bw() +
+  theme(axis.text.y = element_text(size=5))
+```
+
+*Fig 6. All static (blue) and dynamic (pink) variables available for each survey. Points indicate observations, spaces indicate missing observations. Surveys given in order of year.*
+
+It should be noted that while Figure 6 displays *all* variables, some are not appropriate for use. Canopy cover (and possibly LWD) are not truly static covariates; while some systems are inherently more woody/bushy than others, they can change annually and rapidly with forest fires, bank sloughing, flow levels, etc. A prime example is Nadina River before and after complete burns from forest fires. We do not currently have the temporal or spatial resolution in the data to capture such fine-scale landscape change effects on calibration indices. 
+
+<br>
+
+<span style="text-decoration:underline"> **Missing values for dynamic variables** </span>
+
+No concern lies with missing values of static predictor variables, only dynamic ones. Further examination of only missing dynamic variable values using the *finalfit* package confirms values are not always missing at random. For any given variable, we are missing anywhere from 19-75% of observations (Table 1). Note that some indices are currently missing due to outstanding errors to confirm. Year is included as it will be used as a random effect. 
+
+```{r echo=F, include=F}
+explanatory = c("year", "bankfull", "brightness", "cloud_cover", "fish_vis",  "water_vis", "OE", "water_discharge")
+dependent = "index"
+```
+
+*Table 1. Summary of missing values for dynamic variables.*
+
+```{r echo=F, warning=F, message=F}
+cal %>% ff_glimpse(dependent, explanatory)
+```
+```{r echo=F, message=F, warning=F}
+# Clearer visual summary of missing values. 
+cal %>% missing_plot(dependent, explanatory)
+```
+
+*Fig 7. Complete (navy) and missing (light blue) values for dynamic predictor variables. Observation is equivalent to individual surveys, which are roughly ordered by year based on Excel data entry (from 1988 to 2020).*
+
+```{r echo=F, message=F, warning=F, include=F}
+# NA pattern figure; not clear how to interpret but shows clear patterns. 
+cal %>% missing_pattern(dependent, explanatory)
+# hypothesis testing table with p-values; not clear how to interpret
+cal %>% 
+  summary_factorlist(dependent, explanatory, na_include=T, p=T)    # doesn't change if na_include=F
+```
+
+We can see further clear interactions between missing values and the "significant" effect (untested) of year in almost all cases except for water discharge and index (Figure 8 first column). It is also clear that missing cases in any of the 'wetnote' variables (bankfull, brightness, cloud cover, fish/water vis) are clearly related to NA values in any of those given variables; this makes inherent sense as it is most likely that if one variable was missed, they were all missed (i.e., wetnote environmentals were not completed). The initiation of consistently recording the full suite of "modern" wetnote environmentals was probably fairly recently (early 2000s), as evident by the break between box plots in the 'year' column relative to missing values in those variables (rows 2 to 6) (Figure 8). 
+
+```{r echo=F, warning=F, message=F}
+cal %>% missing_pairs(explanatory, dependent, position="fill")
+```
+
+*Fig 8. Matrix relationships between missing cases in each variable (indexed along the right-hand side vertical boxes) and the entire suite of observations for each variable (indexed along the top row of boxes). Gray indicates missing observations. Bars for categorical variables are represented as proportions of the total number of observations relating to missing values; e.g., 100% of the missing bankfull observations are related to 100% of the NA values in bankfull.*
+
+<br>
+
+<span style="text-decoration:underline"> **A note on covariate selection** </span>
+
+While this is an iterative process that requires the following two steps to be conducted simultaneously, there are a few things that can inform prior covariate selection (i.e., *a priori* biological knowledge), given that we have a limited number of observations and therefore need to pare down variable selection. Moving forward, if all variables are going to be considered, the following variables could be **removed** for the given reasons, but variable removal still needs to be tested with appropriate metrics (e.g., VIF and/or pairs plots).
+
+* Canopy cover - for reasons given above    
+* System stability - can be captured in bankfull, discharge, etc. and is not a particularly useful metric   
+* Substrate shade - extremely arbitrary and can be impacted by other features and change. Also highly confounded with turbidity, and not overly informative   
+* Water clarity - while it could be useful, it is currently inconsistently attributed to various systems    
+* Fish vis/water vis/water clarity - likely all correlated    
+* Cloud cover/brightness - likely one of these could be dropped as they are likely correlated   
+
+**Moving forward, the only variable that should be excluded up front based on knowledge is canopy cover.**
+
+<br>
+
+<span style="text-decoration:underline"> **Addressing missing values** </span>
+
+As stated, there is not much that can be done about missing dynamic variable values. They are representative of the real-time system features and not always easily infilled. A short-term alternative is to exclude all variables with missing values (i.e., dynamic variables) and focus on static variables. The following pre-modelling procedure will explore 1) all variables without addressing missing values, and 2) only static variables.
+
+<br>
+
+<br>
+
+### 1.1. Data exploration (all) ### 
+
+*A.2.1 Step 1: Outliers in Zuur et al 2009.  Cleveland dotchart, box/bar plots of response and explanatory variables etc.*
+
+```{r echo=F, include=F}
+# FUNCTIONS FOR THIS SECTION
+
+#-------- Outlier plot functions 
+# Dot chart function (continuous variables or re-coded categorical variables)
+dotchart_fx <- function(x_var, y_var, point_colour){
+  ggplot(cal%>%filter(!is.na({{x_var}})), aes(x={{x_var}}, y={{y_var}})) +
+    geom_point(colour=point_colour, alpha=0.5) +
+    scale_x_continuous(breaks=pretty_breaks()) +
+    labs(y="survey #")
+}
+
+# Bar chart function (categorical variables)
+barchart_fx <- function(x_var){
+  ggplot(data=cal%>%
+           filter(!is.na({{x_var}}), !grepl("CANT", {{x_var}})) %>%
+           group_by({{x_var}}) %>%
+           summarize(n_obs=n()), 
+         aes(x={{x_var}}, y=n_obs)) +
+    geom_bar(stat="identity", colour="black", fill="gray20")
+}
+```
+
+<br>
+
+Static variables:    
+
+* System stability   
+* Size    
+* Water clarity   
+* Substrate shade    
+* Canopy cover (removed)    
+* Large woody debris    
+
+Dynamic variables:    
+
+* Bankfull     
+* Brightness    
+* Cloud cover   
+* Fish visibility   
+* Water visibility    
+* OE  
+* Water discharge   
+* LPE method    
+* LPE   
+
+```{r echo=F, warning=F, message=F}
+# static vars
+ggarrange(dotchart_fx(index, n_row, "red"),
+    ggarrange(dotchart_fx(substrate_shade_recode, n_row, "gray20"),
+              dotchart_fx(lwd_recode, n_row, "gray20"),
+              dotchart_fx(canopy_cover_recode, n_row, "gray20"), ncol=3),
+      ggarrange(dotchart_fx(water_clarity_recode, n_row, "gray20"),   # static \/
+                dotchart_fx(size_recode, n_row, "gray20"),
+                barchart_fx(system_stability), ncol=3), nrow=3)
+
+```
+
+```{r echo=F, warning=F, message=F}
+# dynamic vars
+ggarrange(dotchart_fx(bankfull_recode, n_row, "gray20"),         
+          dotchart_fx(brightness_recode, n_row, "gray20"),
+          dotchart_fx(cc_recode, n_row, "gray20"),
+          dotchart_fx(fish_vis_recode, n_row, "gray20"),
+          dotchart_fx(water_vis_recode, n_row, "gray20"),
+          dotchart_fx(OE, n_row, "gray20"),
+          dotchart_fx(water_discharge, n_row, "gray20"),
+          dotchart_fx(lpe, n_row, "gray20"),
+          barchart_fx(lpe_method), ncol=3, nrow=5)
+```
+
+*Fig 9. Data exploration of response (index, red) and predictor (black) DYNAMIC variables to be considered for calibration. Factors have been re-coded where appropriate as integer values, where 1 is the smallest/lowest factor value and values increase as factor level values increase. For example, bankful=1 is 0-25% and bankfull=4 is 75-100%. Water vis=1 is 0.25-0.5 and water vis=4 is 3.0-bottom.*
+
+<br>
+
+Some outliers exist in the dynamic variables. For example, one data point of discharge > 1000 cms. In addition, some variables have unbalanced clusters of observations (e.g., water visibility, water clarity, size, brightness; Fig 9). Recall too that some of these values are MNAR (see Section 0 above). 
+
+<br> 
+
+<br>
+
+<br>
+
+### 1.2. Multicollinearity ### 
+
+*A.2.2 Step 2: Multicollinearity in Zuur et al 2009.*
+
+```{r}
+# FUNCTIONS FOR THIS SECTION: 
+
+#-------- Pairs plot functions
+# Function for scaled correlation coefficient text in upper panels
+panel.cor.fx <- function(x, y, digits=2, prefix="", cex.cor, ...)
+{
+  usr = par("usr"); on.exit(par(usr))
+  par(usr = c(0, 1, 0, 1))
+  r = cor(x, y,use="na.or.complete")
+  txt = format(c(r, 0.123456789), digits=digits)[1]
+  txt = paste(prefix, txt, sep="")
+  if(missing(cex.cor)) cex.cor = 0.8/strwidth(txt)
+  text(0.5, 0.5, txt, cex=ifelse(r<0.3 & r>-0.3, 0.7, r*2))#cex.cor * r)    (r^2)*2.5
+}
+
+# Function for data histograms on diagonal
+panel.hist.fx <- function(x, ...)
+{
+    usr <- par("usr"); on.exit(par(usr))
+    par(usr = c(usr[1:2], 0, 1.5) )
+    h <- hist(x, plot = FALSE)
+    breaks <- h$breaks; nB <- length(breaks)
+    y <- h$counts; y <- y/max(y)
+    rect(breaks[-nB], 0, breaks[-1], y, col = "blue", ...)
+}
+```
+
+<br>
+
+List of variables of interest to examine for collinearity: 
+
+* Size    
+* System stability  
+* LWD   
+* Substrate shade   
+* Water clarity   
+* (Canopy cover included here just to show relationship)    
+* Bankfull     
+* Brightness    
+* Cloud cover  
+* Fish visibility  
+* Water visibility    
+* OE  
+* Water discharge   
+* LPE method    
+* LPE        
+
+```{r echo=F, include=F}
+# Pairs COR - no lpe_method due to categorical
+z <- cbind(cal$index, cal$system_stability, cal$size_recode, cal$water_clarity_recode, cal$canopy_cover_recode, cal$lwd_recode, cal$substrate_shade_recode, cal$bankfull_recode, cal$brightness_recode, cal$cc_recode, cal$fish_vis_recode, cal$water_vis_recode, cal$OE, cal$water_discharge, cal$lpe, cal$lpe_method) 
+
+colnames(z) <- c("index", "stab", "size", "clarity", "canopy", "LWD", "sub_sh", 
+                 "bankfull", "bright", "cloud", "fish_vis", "water_vis", "OE", 
+                 "flow", "lpe", "lpe_meth")
+```
+
+Examination of continuous variables indicates collinearity between some variables (defined roughly as *r*>0.6; Figure 10). In the initial global model, VIF scores are exceptionally high for several variables (Table 1a). Step-wise variable removal based on highest VIF values indicates that the best combination of explanatory variables to reduce multicollinearity moving forward is: OE, discharge, water visibility, LPE, and LPE method; i.e., removing bankfull and stream size (Table 1b and c). 
+
+```{r echo=F, warning=F, message=F}
+pairs(z, lower.panel=panel.smooth, upper.panel=panel.cor.fx, diag.panel=panel.hist.fx, cex=1, pch=16)
+```
+
+*Fig 10. Pairs plot for variables indicating level of collinearity between each variable pairing. Histograms of data observations given on the diagonal. Smoothed lines (red) generated using default loess smoother. No data transformations. Ordinal categorical variables recoded as integers for purposes of plotting.*
+
+
+Quantitative assessment of multicollinearity between all variables (including categorical) is presented in the following Variance Inflation Factor (VIF) tables (Table 2a-f). Step-wise removal of collinear variables results in the remaining 9 variables: system_stability, substrate_shade_recode, water_clarity_recode, bankfull_recode, brightness_recode, water_vis_recode, OE, lpe, lpe_method (Table 2f). Note that this is likely the maximum number of predictor variables that could be used in a multiple regression model, without random effects. The final model may need further reduced set of coviartes to avoid over-fitting.
+
+```{r include=F, echo=F}
+#--------- VIF tests - stepwise removal of highly collinear predictors (cutoff VIF>3)
+
+# global
+vif.test.1 <- lm(index ~ system_stability + lwd_recode + substrate_shade_recode + size_recode + water_clarity_recode + bankfull_recode + brightness_recode + cc_recode + fish_vis_recode + water_vis_recode + OE + water_discharge + lpe + lpe_method, data=cal) 
+
+# no fish_vis
+vif.test.2 <- lm(index ~ system_stability + lwd_recode + substrate_shade_recode + size_recode + water_clarity_recode + bankfull_recode + brightness_recode + cc_recode + water_vis_recode + OE + water_discharge + lpe + lpe_method, data=cal)  
+
+# no fish_vis, no LWD
+vif.test.3 <- lm(index ~ system_stability + substrate_shade_recode + size_recode + water_clarity_recode + bankfull_recode + brightness_recode + cc_recode + water_vis_recode + OE + water_discharge + lpe + lpe_method, data=cal) 
+
+# no fish_vis, no LWD, no cloud_cover
+vif.test.4 <- lm(index ~ system_stability + substrate_shade_recode + size_recode + water_clarity_recode + bankfull_recode + brightness_recode + water_vis_recode + OE + water_discharge + lpe + lpe_method, data=cal)
+
+# no fish_vis, no LWD, no cloud_cover, no size
+vif.test.5 <- lm(index ~ system_stability + substrate_shade_recode + water_clarity_recode + bankfull_recode + brightness_recode + water_vis_recode + OE + water_discharge + lpe + lpe_method, data=cal)
+
+# no fish_vis, no LWD, no cloud_cover, no discharge
+vif.test.6 <- lm(index ~ system_stability + substrate_shade_recode + water_clarity_recode + bankfull_recode + brightness_recode + water_vis_recode + OE + lpe + lpe_method, data=cal)
+```
+
+<br>
+
+*Table 2. Variance Inflation Factor (VIF) scores for various iterations of explanatory variable selection. Note Table 2a shows the VIF scores for the global model, followed by step-wise removals of the largest VIF factors (cut off GVIF>~3) Tables 1b-f.*
+
+```{r echo=F, warning=F, message=F}
+knitr::kable(cbind("Table"=c("2a", "(global)", rep("",12)), dplyr::as_data_frame(vif(vif.test.1), rownames = "Variable")))
+knitr::kable(cbind("Table"=c("2b", "(- fish_vis)", rep("",11)), dplyr::as_data_frame(vif(vif.test.2), rownames = "Variable")))
+knitr::kable(cbind("Table"=c("2c", "(- fish_vis)", "(- LWD)", rep("", 9)), dplyr::as_data_frame(vif(vif.test.3), rownames = "Variable")))
+knitr::kable(cbind("Table"=c("2d", "(- fish_vis)", "(- LWD)", "(- cloud)", rep("", 7)), dplyr::as_data_frame(vif(vif.test.4), rownames = "Variable")))
+knitr::kable(cbind("Table"=c("2e", "(- fish_vis)", "(- LWD)", "(- cloud)", "(-size)", rep("", 5)), dplyr::as_data_frame(vif(vif.test.5), rownames = "Variable")))
+knitr::kable(cbind("Table"=c("2f", "(- fish_vis)", "(- LWD)", "(- cloud)", "(-size)", "(-flow)", rep("", 3)), dplyr::as_data_frame(vif(vif.test.6), rownames = "Variable")))
+```
+
+<br>
+
+#### Back to 1.0. Missing Values ####
+
+Returning back to assess relationships between missing values following VIF variable selection:   
+
+* System stability    
+* Substrate shade   
+* Water clarity   
+* Bankfull    
+* Brightness    
+* Water visibility    
+* OE    
+* LPE   
+* LPE method    
+
+Note that there are still patterns betweeen missing values, particularly between LPE method and environmentals. Missing values in bankfull and OE are more likely with xs-medium streams and at low water visibility. Understanding that relationship is less clear than that environmentals are more likely to be missing on ground surveys than aerial (Fig 11), but makes sense when you consider that environmentals were more common later in the time series, while small streams were surveyed earlier in the time series. 
+
+```{r include=F, echo=F}
+explanatory2 = c("system_stability", "substrate_shade_recode", "water_clarity_recode", "bankfull", "brightness", "water_vis", "OE", "lpe", "lpe_method")
+
+# Clearer visual summary of missing values. 
+cal %>% missing_plot(dependent, explanatory2)
+```
+
+```{r echo=F, warning=F, message=F}
+cal %>% missing_pairs(explanatory2, dependent, position="fill")
+```
+
+*Fig 12. Matrix relationships between missing cases for selected variables following VIF analysis. Missing values for each variable are indexed along the right-hand side vertical boxes, and the entire suite of observations for each variable are indexed along the top row of boxes. Gray indicates missing observations. Bars for categorical variables are represented as proportions of the total number of observations relating to missing values; e.g., 100% of the missing bankfull observations are related to 100% of the NA values in bankfull (as would be expected).*
+
+There are still patterns in missing values, although fewer than previously given step-wise removal of some variables in the VIF process.
+
+**Note this exercise still has not addressed the issue of MNAR values in dynamic variables. There are only n=27 cases of full observations. We will continue with this data exploration below, and then in section 2 fit models excluding variables with missing values.**
+
+<br>
+
+<br>
+
+<br>
+
+### 1.3. Relationships between response and explanatory variables ### 
+
+A.2.3 Step 3: Relationships in Zuur et al 2009. 
+
+```{r echo=F, include=F}
+# FUNCTIONS FOR THIS SECTION: 
+
+#-------- Custom relationship plot function
+relation.fx <- function(x_var, ann_x, ann_y, ann_lab, x_lab){
   ggplot(cal%>%filter(!is.na(.data[[x_var]]), !grepl("CANT", .data[[x_var]])), aes(x=.data[[x_var]], y=index)) +
-    geom_point(shape=21, colour="black", size=3.5, fill="gray30") +
-    annotate("text", x=ann_x, y=ann_y, label=ann_lab) +
+    geom_point(shape=21, size=3, fill="gray70", alpha=0.6) +
+    geom_smooth(method = "lm", se=F, colour="green", size=1, alpha=0.5) +
+    geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs"), se=F, colour="red", size=1, alpha=0.5) +
+    geom_smooth(method = "loess", se=F, colour="blue", size=1, alpha=0.5) +
+    annotate("text", x=ann_x, y=ann_y, label=ann_lab, fontface=2) +
     labs(x=x_lab, y="Index") +
     theme_bw() + 
     theme(legend.position=c(0.1,0.85),
@@ -274,140 +672,352 @@ env_plot_fx <- function(x_var, ann_x, ann_y, ann_lab, x_lab){
   }
 ```
 
-```{r, echo=F, warning=F, message=F}
-ggarrange(env_plot_fx("bankfull", "0-25", 17, "A", "Bankfull (%)"), 
-          env_plot_fx("water_vis", "0.25-0.5", 17, "B", "Water visibility (m)"), 
-          env_plot_fx("size", "V. Small", 17, "C", "Stream size"), 
-          env_plot_fx("OE", 25, 17, "D", "Observer efficiency (%)"), nrow=2, ncol=2)
+<br>
+
+List of variables of interest to examine relationships (based on results of step 2 above):
+
+* System stability    
+* Substrate shade   
+* Water clarity   
+* Bankfull    
+* Brightness    
+* Water visibility    
+* OE    
+* LPE   
+* LPE method    
+
+```{r echo=F, warning=F, message=F}
+ggarrange(relation.fx("system_stability", 1, 17, "", "Stability"),
+          relation.fx("substrate_shade_recode", 1, 17, "", "SUbstrate shade"),
+          relation.fx("water_clarity_recode", 1, 17, "", "Water clarity (static)"), 
+          relation.fx("bankfull_recode", 1, 17, "", "Bankfull (%)"),
+          relation.fx("brightness_recode", 1, 17, "", "Brightness"),
+          relation.fx("water_vis_recode", 1, 17, "", "Water visibility (dynamic)"),
+          relation.fx("OE", 25, 17, "", "Observer efficiency (%)"), 
+          relation.fx("lpe", 25, 15, "", "LPE"),
+          relation.fx("lpe_method", "Aerial", 17, "", "LPE method"), common.legend = T)
 ```
 
-*Fig 5. Relationships between the escapement index and a) percent bankfull, b) water depth visibility, c) stream size, and d) observer efficiency.* 
+*Fig 13. Relationships between response variable (index) and explanatory variables (selected during step-wise VIF process) expressed using loess (blue) and cubic spline (red) smoothers, where possible. Note some smoothers require a minimum number of x-axis observations to created informed smoothers. Ordinal categorical variables were recoded as integers for purposes of smoothing.*
+
+<br>
+
 <br>
 
 <br> 
 
-One consideration is how to extrapolate results to streams outside of the calibration database. A complete inventory of streams and their qualities (whatever ends up being the important predictors from GLMM exercises) could be compiled for quick application, or they can be fed directly into the model to estimate their index. 
+### 2.2. - 2.3. Multicollinearity and relationships with only static variables ### 
+
+*Step 2.0 Missing values not needed; Step 2.1 data exploration completed above in Step 1.1.*
 
 <br>
 
-<br>
+#### **2.2. Multicollinearity** ####  
 
-## **Model development** ##
-
--------
-
-**State-Space Models (SSM)**    
-While these, in practice, seem ideal for our calibration dataset as they can model both process and observation error in a time series, it is highly questionable as to whether they would be appropriate given the sparse time series across many systems. The main issue that arises is the assumption that an estimate at time *t* is independent, apart from dependence on time *t-1*, and that past time-steps are used to make inference about subsequent time steps. The ‘book-keeping’ process of SSMs is the information gleaned over time. As we do not have this for each system, and you cannot use the Adams River in 2010 to make inference about Chilko in 2011, unfortunately SSMs appear to be unrealistic for the dataset at the present. Further example; HPEs are only obtained for some systems on dominant years, but not always reflective of brood cycles/primary age cohorts.
-
-<br>
-
-**Boosted Regression Trees (BRT)**
-
-A possibility to explore first using environmental covariates below in place of a coarser GLMM first. 
-
-<br>
-
-**Generalized Linear Mixed-Effects Models (GLMM)**    
-Since SSMs are out, the final model form is currently unknown (e.g., GLM, GAM, Bayesian, etc.). However, the theoretical framework of SSMs, i.e., the need to account for, or at least separate, both process variation and observation error, still holds. 
-
-One possible way of doing this is to incorporate covariates that account for these changes. For example, a model taking the form: 
-
-(Equation 1)
-Index ~ LPE + LPE_method + water_data + water_clarity + stream_size + density(?) + intraspp + (1|year) 
-
-Recall that there are two levels of covariate measurement: system and system-year. 
-
-<br>
-
-*Enumeration covariates*
-
-* LPE: The better predictor would likely be HPE, but in legitimate, non-calibration years, this wouldn't be available. Therefore use LPE. 
-* LPE_method: differences between aerial and ground surveys have been noted for different systems. This analysis needs to be re-confirmed. 
-
-<br>
-
-*Environmental covariates*    
-Note these will be the bottleneck and likely be the cause for reduction of the calibration dataset, particularly water quantity. 
-Water quantity. To note, should discharge (or some quantitative water feature, e.g., level) be used, consider calculating it as a % deviance from historical mean. This could better capture high water events that impact visual counting, although could eliminate the relative difference among streams (e.g., how the Harrison is way bigger than Gluske). Perhaps both should be included?
-
-* water_data: either discharge, level, bankfull, or some measure in-season of water quantity    
-* water_clarity: either fish vis, water vis (in-season) or broad designations ('static', e.g., turbid/tannic, clear, etc.) 
-* stream_size: static variable of relative stream size to account for EStu tribs vs. Stellako (as example). **Right now this exists as categorical/factor data, could be made more robust by extracting approximate wetted widths from Google Earth, especially if historical images exist (ability to detect/test if major historical changes have occurred over time).**    
-* density: density of spawners, or available spawn habitat. Could potentially replace stream_size, although these capture slightly different aspects. Stream_Size accounts for difficulties counting large bodies of water well, and the potential to miss/double count fish; density accounts for large runs packed into small amount of spawn habitat that are difficult to count, particularly if stacked vertically. **However may be difficult to estimate given current state of data recording**.
-* intraspp: likely binary dummy variable noting if a stream has a significant presence of other confounding species that would affect counts (e.g., Kokanee, pink years, Chum on Harrison, etc.).    
-
-Unfortunately OE only exists for a small sub-set, but consider re-running subset of models with OE covar to test its predictive ability relative to other in-season variables. 
-
-<br>
-
-*Random effects*
-
-* year: accounts for other annual variables - changes to landscapes (e.g., wildfire removing shadows), undergrowth change over time, log jams, etc. that we can't quantify. Also potential changes over time to runs and systems (e.g., run size, spawn timing, residence time, or sex ratios not explicitly captured by LPE).
----->May want to examine breakpoint analysis of index~year to see if any point in time indecies change; facet~system?
-
-<br>
-
-*Other covariates*
-
-* While substrate darkness, woody debris, number of pools, overhanging bank veg, etc. are likely natural influences on visual counts, these cannot be quantified each year. It is possible a random effect, or ordinate ‘all-encompassing’ ‘system complexity’ variable is created. Consider too something like PCA. 
-* Residence time - Large implications for visual count as most only get 1 flight (or at least, if 2 flights, the 2nd is typically due to missing POS on the first one, and one point estimate is still used). Consider this more - how to incorporate?    
-
-<br>
-
-**Model Validation**    
-Whatever model form is chosen, models should be fit to ~80% of the data while ~20% should be held back for validation to assess the accuracy of the HPE predictions obtained by the model. Early examination determined that similar linear models with no environmental parameters yielded extremely poor HPE predictions compared to observed HPE estimates (FIGURE). 
-
-Consider two modelling exercises, one with in-season ('dynamic') data and one with long-standing data ('stationary' or 'static') to assess differences. Static data doesn't allow for changes due to high water events etc. though. 
-
-<br>
-
-<br>
-
-<br>
-
-## **Preliminary results** ##
-
---------
-
-```{r, echo=F, include=F, message=F, warning=F}
-z <- cbind(cal$water_discharge, cal$lpe, cal$OE)
-colnames(z) <- c("discharge", "LPE", "OE")
-cor(z)
-pairs(z)
-
-panel.cor <- function(x, y, digits=2, prefix="", cex.cor, ...)
-{
-  usr = par("usr"); on.exit(par(usr))
-  par(usr = c(0, 1, 0, 1))
-  r = cor(x, y,use="na.or.complete")
-  txt = format(c(r, 0.123456789), digits=digits)[1]
-  txt = paste(prefix, txt, sep="")
-  if(missing(cex.cor)) cex.cor = 0.8/strwidth(txt)
-  text(0.5, 0.5, txt, cex = 1.5)#cex.cor * r)
-}
-pairs(z,
-      upper.panel = panel.cor,
-      cex=1,
-      pch=16)
+```{r echo=F, include=F}
+# Pairs COR
+z.s <- cbind(cal$index, cal$system_stability, cal$size_recode, cal$water_clarity_recode, cal$substrate_shade_recode, cal$canopy_cover_recode, cal$lwd_recode, cal$lpe, cal$lpe_method)   
+colnames(z.s) <- c("index", "stability", "size", "water_clarity", "substrate_shade", "canopy_cover", "lwd", "lpe", "lpe_method")
 ```
 
+Examination of static variables only indicates high collinearity between several variables (*r*>0.6; Figure 14). However, in the initial global model, VIF scores are exceptionally high for stream size (Table 3a). Step-wise variable removal based on highest VIF values indicates that the best combination of explanatory variables to reduce multicollinearity moving forward is: stability, water clarity, substrate shade, LWD, LPE, and LPE method; i.e., removing stream size (Table 3b). Note that canopy cover was not considered moving forward as it can vary annually with fires, pests, etc.
+
+```{r echo=F, warning=F, message=F}
+pairs(z.s, lower.panel=panel.smooth, upper.panel=panel.cor.fx, diag.panel=panel.hist.fx, cex=1, pch=16)
+```
+
+*Fig. 14. Pairs plot for STATIC variables indicating level of collinearity between each variable pairing. Histograms of data observations given on the diagonal. Smoothed lines (red) generated using default loess smoother. No data transformations. Ordinal categorical variables re-coded as integers for purposes of plotting.*
+
+```{r include=F, echo=F}
+#--------- VIF tests - stepwise removal of highly collinear predictors (cutoff VIF>3)
+### just static vars
+
+# global
+vif.stat.1 <- lm(index ~ system_stability + size_recode + water_clarity_recode + substrate_shade_recode + lwd_recode + lpe + lpe_method, data=cal)
+
+#no size
+vif.stat.2 <- lm(index ~ system_stability + water_clarity_recode + substrate_shade_recode + lwd_recode + lpe + lpe_method, data=cal)       
+```
+
+*Table 3. Variance Inflation Factor (VIF) scores for global models with STATIC variables. Note Table 3a shows the VIF scores for the global model, followed by step-wise removals of the largest VIF factors (cut off GVIF>~3) Table 3b.*
+
+```{r echo=F, warning=F, message=F}
+knitr::kable(cbind("Table"=c("3a", "(global)", rep("",5)), dplyr::as_data_frame(vif(vif.stat.1), rownames = "Variable")))
+knitr::kable(cbind("Table"=c("3b", "(global)", "(-size)", rep("",3)), dplyr::as_data_frame(vif(vif.stat.2), rownames = "Variable")))
+```
+
+<br>
+
+#### **2.3 Relationships** ####  
+
+<br>
+
+There is evidence of relationships between the index and most variables (Fig 15). Smoothed lines are shown just for comparison to previous graphs and for future considerations with GAM use, but are not considered in this GLM exercise. 
+
+```{r echo=F, warning=F, message=F}
+ggarrange(relation.fx("system_stability", "Stable", 17, "", "Stability"),
+          relation.fx("water_clarity_recode", 1, 17, "", "Water clarity"), 
+          relation.fx("substrate_shade_recode", 1, 17, "", "Substrate shade"),
+          relation.fx("lwd_recode", 1, 17, "", "LWD"),
+          relation.fx("lpe", 1, 17, "", "LPE"),
+          relation.fx("lpe_method", 1, 17, "", "LPE method"),
+          common.legend = T)
+```
+
+*Fig 15. Relationship plots for static variables following step-wise VIF variable removal. Lines are linear (green), cubic spline (red) and loess (blue) smoothing.*
+
+<br>
+
+<br>
+
+<br>
+
+### 4. Model development ###
+
+#### 4.1 GLMs ####
+
+The following is simply an exercise in model development; it does not address how to handle missing values. Previous work with GAMs appears to have issues with the level of predictors and effective degrees of freedom, models do not converge. Attempt with GLMM and static variables only.
+
+Based on the VIF process, the predictor variables are:    
+
+* Stability    
+* Water clarity   
+* substrate shade   
+* LWD   
+* LPE   
+* LPE method    
+
+To test this process, the model was fit to a random selection of 80% of the data and validated on a random 20%.
+
+```{r echo=F, include=F}
+# Randomly select 80% of data. MUST RUN set.seed(1) first for reproducibility! 
+# note addition of term from below - rescaling 'lpe'
+set.seed(1)
+cal.80 <- cal %>% 
+  slice_sample(prop=0.8) %>%
+  mutate(hpe = ifelse(is.na(hpe), hpe_escdb, hpe)) %>%
+  mutate(index = ifelse(is.na(index), hpe/lpe, index)) %>%
+  print()
+cal.80.names <- cal.80$usid
+
+# Filter remaining 20% of data for model validation
+cal.20 <- cal %>%
+  filter(!usid%in%c(cal.80.names)) %>%
+  print()
+```
+
+```{r echo=F, message=F, warning=F}
+#--------- FIT MODELS
+# model suggests re-scaling 'lpe' - see above code chunk 
+
+m.global <- glm(index ~ system_stability + large_woody_debris + water_clarity + substrate_shade + lpe_sc + lpe_method, data=cal.80,  family=Gamma(link="inverse"), na.action = "na.fail")
+summary(m.global)
+
+# Run all combinations of models
+m.dredge <- dredge(m.global, beta="none", rank="AICc")
+summary(m.dredge)
 
 
+#--------- EVALUATE MODELS
+# 1.1. TOP MODEL SET: dAIC<4  
+model.sel.dAIC4 <- get.models(m.dredge, subset=delta<4)                    # note essentially identical outcome with weight<=0.95
+
+# 1.2. MODEL-AVERAGE TOP MODEL SET: dAIC<4
+model.avg.dAIC4 <- model.avg(model.sel.dAIC4)
+
+# 2. TOP MODEL: dAIC=0
+model.sel.top <- get.models(m.dredge, subset=1)
+m.top <- glm(index ~ large_woody_debris + lpe_sc + system_stability + water_clarity, data=cal.80, family=Gamma(link="inverse"), na.action="na.fail")
+
+# Model tables for visualizing
+model.table.dAIC4 <- subset(m.dredge, delta<4)
+model.table.top <- subset(m.dredge, subset=1)
 
 
+#--------- PREDICT/VALIDATE MODEL
+# Based on model-averaged parameters: 
+cal.20$index_avgmod4 <- predict(model.avg.dAIC4, type="link", backtransform=T, full=F, cal.20)
+cal.20$index_topmod <- predict(m.top, type="link", backtransform=T, full=T, cal.20)
+```
+
+```{r echo=F, include=F}
+####### Plot background work, not shown ###
+# PLOT PREDICTIONS: INDICES AND POPULATION SIZES
+# "True" index (hpe/lpe) vs. modelled index - note top model performs poorly compared to model-averaged and is not shown
+index<-ggplot() +
+  geom_hline(yintercept = 1.8, colour="red") +
+  geom_bar(data=cal.20, aes(x=factor(n_row), y=index), stat="identity", colour="black", fill="white") +
+  geom_bar(data=cal.20, aes(x=factor(n_row), y=index_avgmod4), stat="identity", fill="blue", alpha=0.8, width=0.7) 
+
+# Implications of "true" population size (HPE) vs. resulting 1.8-expanded HPE and model-expanded HPE
+cal.20 <- cal.20 %>% 
+  mutate(pop_est_18 = lpe*1.8,
+         pop_est_model = lpe*index_avgmod4)
+
+pop_ests<-ggplot() +
+  geom_bar(data=cal.20, aes(x=factor(n_row), y=hpe), stat="identity", colour="gray70", fill="gray70") +
+  geom_bar(data=cal.20, aes(x=factor(n_row), y=pop_est_18), stat="identity", colour="black", fill="white", alpha=0.5, width=0.6) +
+  geom_bar(data=cal.20, aes(x=factor(n_row), y=pop_est_model), stat="identity", fill="blue", alpha=0.5, width=0.3) +
+  labs(y="Population estimate")
 
 
+# PLOT PREDICTIONS: DIFFERENCES BETWEEN ESTIMATES
+DBEs <- cal.20 %>%
+  dplyr::select(usid, n_row, hpe, pop_est_18, pop_est_model) %>%
+  pivot_longer(cols=c(pop_est_18, pop_est_model), names_to = "expand_type", values_to = "pop_est") %>%
+  mutate(difference=hpe-pop_est,
+         pDBE=(difference/hpe)*100) %>%
+  print()
+
+dDBE<-ggplot(DBEs, aes(x=factor(n_row), y=difference, group=expand_type, fill=expand_type)) +
+  geom_hline(yintercept = 0, colour="black") +
+  geom_bar(stat="identity", position="dodge", width=0.5) +
+  scale_fill_discrete(labels = c("lpe*1.8", "lpe*model estimated index")) +
+  labs(y="# over-est        # under-est", fill="expansion method")
+
+pDBE<-ggplot(DBEs, aes(x=factor(n_row), y=pDBE, group=expand_type, fill=expand_type)) +
+  geom_hline(yintercept = 0, colour="black") +
+  geom_bar(position="dodge", stat="identity", width=0.5) +
+  scale_fill_discrete(labels = c("lpe*1.8", "lpe*model estimated index")) +
+  labs(y="% over-est      % under-est", fill="expansion method")
+#######
+```
+
+```{r echo=F, warning=F, message=F}
+ggarrange(index, pop_ests, nrow=2)
+```
+
+*Fig 16. True index (HPE/LPE; white) and model-predicted index (blue) for verification dataset (20% of full dataset). Red line indicates 1.8 index.*
+
+```{r echo=F, warning=F, message=F}
+ggarrange(dDBE, pDBE, nrow=2)
+```
+
+*Fig 17. Discrepancy in a) number of fish and b) proportion of population between the 1.8-expanded population estimate and the model-estimated population estimate compared to the known HPE.*
+
+<br>
+
+#### 4.2. Exponential univariate ####
+
+**Index ~ OE**
+
+```{r echo=F, include=F}
+exp.test.oe <- cal %>% 
+  filter(!is.na(index) & !is.na(OE)) %>% 
+  print()
+
+set.seed(123)
+exp.test.oe.80 <- exp.test.oe %>% 
+  slice_sample(prop=0.8) %>%
+  print()
+exp.names.oe <- exp.test.oe.80$usid
+
+exp.test.oe.20 <- exp.test.oe %>%
+  filter(!usid%in%c(exp.names.oe)) %>%
+  print()
 
 
+# Select an approximate $\theta$, since theta must be lower than min(y), and greater than zero
+theta.0 <- min(exp.test.oe.80$index)*0.5  
+
+# Estimate the rest parameters using a linear model
+model.0 <- lm(log(index-theta.0) ~ OE, data=exp.test.oe.80)  
+alpha.0 <- exp(coef(model.0)[1])
+beta.0 <- coef(model.0)[2]
+
+# Starting parameters
+start <- list(alpha=alpha.0, beta=beta.0, theta=theta.0)
+model.exp.oe <- nls(index ~ alpha*exp(beta*OE) + theta , data=exp.test.oe.80, start=start)
+predict(model.exp.oe)
+
+# Predict
+exp.test.oe.20$index_modelexp <- NA
+exp.test.oe.20$index_modelexp <- predict(model.exp.oe, newdata=exp.test.oe.20)
+```
+
+```{r echo=F, warning=F, message=F}
+# Plot fitted curve
+ggplot(exp.test.oe.80, aes(x=OE, y=index)) +
+     geom_point() +
+     geom_line(aes(y = predict(model.exp.oe)), size=1, colour="red")
+```
+
+*Fig 17. Index~OE with fitted exponential model.*
+
+```{r echo=F, warning=F, message=F}
+ggplot() +
+  geom_bar(data=exp.test.oe.20, aes(x=factor(n_row), y=index), stat="identity", colour="black", fill="white") +
+  geom_bar(data=exp.test.oe.20, aes(x=factor(n_row), y=index_modelexp), stat="identity", fill="blue", alpha=0.8, width=0.7) 
+
+ggplot() +
+  geom_bar(data=exp.test.oe.20, aes(x=factor(n_row), y=hpe), stat="identity", colour="gray70", fill="gray70") +
+  geom_bar(data=exp.test.oe.20, aes(x=factor(n_row), y=(lpe*1.8)), stat="identity", colour="black", fill="white", alpha=0.5, width=0.6) +
+  geom_bar(data=exp.test.oe.20, aes(x=factor(n_row), y=(lpe*index_modelexp)), stat="identity", fill="blue", alpha=0.5, width=0.3) +
+  labs(y="Population estimate")
+```
+
+*Fig 18. Comparison of a) known and exponential-model indices and b) resulting population estimates of 1.8-expanded (white) and model-expanded (blue) counts compared to known population estimate (gray).*
+
+<br>
+
+**Index ~ flow**
+
+```{r echo=F, include=F}
+exp.test.flow <- cal %>% 
+  filter(!is.na(index) & !is.na(water_discharge)) %>% 
+  print()
+
+set.seed(123)
+exp.test.flow.80 <- exp.test.flow %>% 
+  slice_sample(prop=0.8) %>%
+  print()
+exp.flow.names <- exp.test.flow.80$usid
+
+exp.test.flow.20 <- exp.test.flow %>%
+  filter(!usid%in%c(exp.flow.names)) %>%
+  print()
 
 
+# Select an approximate $\theta$, since theta must be higher than max(y), and greater than zero
+theta.0 <- max(exp.test.flow.80$index)*1.1  
 
+# Estimate the rest parameters using a linear model
+model.0 <- lm(log(-index+theta.0) ~ water_discharge, data=exp.test.flow.80)  
+alpha.0 <- -exp(coef(model.0)[1])
+beta.0 <- coef(model.0)[2]
 
+# Starting parameters
+start <- list(alpha=alpha.0, beta=beta.0, theta=theta.0)
+model.exp.flow <- nls(index ~ alpha*exp(beta*water_discharge) + theta, data=exp.test.flow.80, start=start)
+predict(model.exp.flow)
 
+# Predict
+exp.test.flow.20$index_modelexp <- NA
+exp.test.flow.20$index_modelexp <- predict(model.exp.flow, newdata=exp.test.flow.20)
+```
 
+```{r echo=F, warning=F, message=F}
+# Plot fitted curve
+ggplot(exp.test.flow.80, aes(x=water_discharge, y=index)) +
+  geom_point() +
+  geom_line(aes(y = predict(model.exp.flow)), size=1, colour="red")
+```
 
+*Fig 19. Index~flow with (poorly) fitted exponential model.*
 
+```{r echo=F, warning=F, message=F}
+ggplot() +
+  geom_bar(data=exp.test.flow.20, aes(x=factor(n_row), y=index), stat="identity", colour="black", fill="white") +
+  geom_bar(data=exp.test.flow.20, aes(x=factor(n_row), y=index_modelexp), stat="identity", fill="blue", alpha=0.8, width=0.7) 
 
+ggplot() +
+  geom_bar(data=exp.test.flow.20, aes(x=factor(n_row), y=hpe), stat="identity", colour="gray70", fill="gray70") +
+  geom_bar(data=exp.test.flow.20, aes(x=factor(n_row), y=(lpe*1.8)), stat="identity", colour="black", fill="white", alpha=0.5, width=0.6) +
+  geom_bar(data=exp.test.flow.20, aes(x=factor(n_row), y=(lpe*index_modelexp)), stat="identity", fill="blue", alpha=0.5, width=0.3) +
+  labs(y="Population estimate")
+```
+
+*Fig 20. Comparison of a) known and exponential-model indices and b) resulting population estimates of 1.8-expanded (white) and model-expanded (blue) counts compared to known population estimate (gray).*
 
 
 
