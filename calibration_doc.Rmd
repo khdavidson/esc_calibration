@@ -21,9 +21,9 @@ library(scales)    # for pretty_breaks()
 library(finalfit)  # for ff_glimpse()/missing values summaries
 library(naniar)    # for miss_var_summary()
 library(car)       # for vif()
-library(glmmTMB)
+#library(glmmTMB)  # for glmmTMB()
 #library(mgcv)     # do not run if gam is loaded. for gam() with regression splines
-#library(gam)       # do not run if mgcv is loaded. for gam() with loess
+#library(gam)      # do not run if mgcv is loaded. for gam() with loess
 #library(lme4) 
 library(MuMIn)     # for dredge(), model.avg(), predict(), etc.
 
@@ -59,10 +59,15 @@ cal <- cal.raw %>%
   mutate(brightness_recode = case_when(brightness=="Dark"~1, brightness=="Medium"~2, brightness=="Bright"~3, brightness=="Full"~4)) %>%
   mutate(fish_vis_recode = case_when(fish_vis=="Low"~1, fish_vis=="Medium"~2, fish_vis=="High"~3)) %>%
   mutate(water_vis_recode = case_when(water_vis=="0.25-0.5"~1, water_vis=="0.5-1.0"~2, water_vis=="1.0-3.0"~3, water_vis=="3.0-bottom"~4)) %>%
+  mutate(stability_recode = case_when(system_stability=="Stable"~0, system_stability=="Volatile"~1)) %>%
+  mutate(lpe_method_recode = case_when(lpe_method=="Aerial"~1, lpe_method=="Ground"~0)) %>%
   mutate_at(c("water_clarity_recode", "substrate_shade_recode", "lwd_recode", "fish_vis_recode"), as.integer) %>%
   mutate(lpe_sc = scale(lpe, center=F, scale=T)) %>%
   dplyr::select(sid, usid, n_row, watershed_group:lpe_sc)
 cal$size <- factor(cal$size, levels=c(NA, "V. Small", "Small", "Medium", "Large", "X-Large"), ordered=T)
+
+# export for summary version
+write.csv(cal, "calibration_clean_BI02sub.csv", row.names=F)
 ```
 
 <br>
@@ -71,9 +76,11 @@ cal$size <- factor(cal$size, levels=c(NA, "V. Small", "Small", "Medium", "Large"
 
 <br>
 
+----------------
+
 ## **Background and objectives** ##     
 
---------
+----------------
  
 The foundation of this work was based on comparing the high-precision to low-precision for each system and year, and examining the range and possible reasons for variability. This was a 10-year study (~2008-2018) funded by the Southern Endowment Fund (Pacific Salmon Commission, reports online), but calibration data has been collected back to the 1980s. Very early calibration work (ca. 1980s) typically focused on small, clear streams with fences. The occasional larger system with a mark-recapture was included. During the SEF years, the database of calibration streams was expanded to include larger systems, sonar programs, and more 'problematic' systems with challenging live counting conditions. The SEF reports limit analyses only to those systems surveyed in the 10 years program. Following the completion of this, a more detailed examination of just the small, clear streams (Early Stuart) reaching back to the 1980s was completed. Through all this work, the primary variable was a 'calibration index', calculated as *I* = *LPE*/*HPE*, where LPE is the low-precision spawner population estimate (from visual counts) and HPE is the high-precision spawner population estimate (from sonar, mark-recapture or fence programs).
 
@@ -137,9 +144,11 @@ ggarrange(all, paired, nrow=2)
 
 <br>
 
+----------------
+
 ## **Methods: Data collection and collation** ##    
 
---------
+----------------
 
 ### Rules for deriving estimates ###
 
@@ -182,7 +191,7 @@ Other specific system-year notes are made in 'calibration_2020_KDupdate.xlsx'.
 <br>
 
 **LPEs and HPEs**    
-Examining relationships between different estimate types and the index (LPE/HPE) they produce. At low escapements the relationship between both the HPE and LPE and HPE and Index is tighter; as escapement increases so does variability (Fig 1), but when assessing univariate relationships the LPE explains 87% of the variation in HPE alone. 
+Examining relationships between different estimate types and the index (LPE/HPE) they produce. At low escapements the relationship between both the HPE and LPE and HPE and Index is tighter; as escapement increases so does variability (Fig 2), but when assessing univariate relationships the LPE explains 87% of the variation in HPE alone. 
 
 ```{r, warning=F, echo=F, include=F}
 hpe_lpe_plot <- function(y_var, x_var, ann_x, ann_y, ann_lab, y_lab, x_lab){
@@ -204,7 +213,7 @@ ggarrange(hpe_lpe_plot("hpe", "lpe", 0, 600000, "A", "HPE", "LPE"),
           hpe_lpe_plot("index", "lpe", 250000, 17, "C", "Index", "LPE"), ncol=2, nrow=2)
 ```
 
-*Fig 1. Relationships between HPEs and a) corresponding LPEs (no expansion applied) and b) index calculated from LPE/HPE.*
+*Fig 2. Relationships between HPEs and a) corresponding LPEs (no expansion applied) and b) index calculated from LPE/HPE.*
 
 ```{r, echo=F, include=F, warning=F, message=F}
 # Examining how much variation is explained by LPE alone 
@@ -236,9 +245,11 @@ One consideration is how to extrapolate results to streams outside of the calibr
 
 <br>
 
+----------------
+
 ## **Methods: Model development and considerations** ##
 
--------
+----------------
 
 ### Bayesian/machine-learning models ###
 
@@ -248,7 +259,7 @@ While these, in practice, seem ideal for our calibration dataset as they can mod
 <br>
 
 **Boosted Regression Trees (BRT)**   
-Considered, but as with SSMs, a lot of data are required and it is typically a model used for a time series as the machine-learning patterns are used to train the model over time. As with SSMs, this should be considered for future analyses if sample size/temporal resolution increase.  
+Considered, but as with SSMs, a lot of data are required and it is typically a model used for a time series as the machine-learning patterns are used to train the model over time. As with SSMs, this should be considered for future analyses if sample size/temporal resolution increase.
 
 <br>
 
@@ -299,13 +310,562 @@ Water quantity. To note, should discharge (or some quantitative water feature, e
 
 <br>
 
+----------------
+
 ## **Preliminary results** ##
 
---------
+----------------
+
+### **Multicollinearity and variable relationships (only static variables)** ### 
+
+---------
+
+*Missing values assessment not needed (see Fig A0.); Data exploration completed in Appendix 2.*
+
+#### **Multicollinearity** ####  
+
+```{r ehco=F, include=F}
+# FUNCTIONS FOR THIS SECTION: 
+
+#-------- Pairs plot functions
+# Function for scaled correlation coefficient text in upper panels
+panel.cor.fx <- function(x, y, digits=2, prefix="", cex.cor, ...)
+{
+  usr = par("usr"); on.exit(par(usr))
+  par(usr = c(0, 1, 0, 1))
+  r = cor(x, y,use="na.or.complete")
+  txt = format(c(r, 0.123456789), digits=digits)[1]
+  txt = paste(prefix, txt, sep="")
+  if(missing(cex.cor)) cex.cor = 0.8/strwidth(txt)
+  text(0.5, 0.5, txt, cex=ifelse(r<0.3 & r>-0.3, 0.7, r*2))#cex.cor * r)    (r^2)*2.5
+}
+
+# Function for data histograms on diagonal
+panel.hist.fx <- function(x, ...)
+{
+    usr <- par("usr"); on.exit(par(usr))
+    par(usr = c(usr[1:2], 0, 1.5) )
+    h <- hist(x, plot = FALSE)
+    breaks <- h$breaks; nB <- length(breaks)
+    y <- h$counts; y <- y/max(y)
+    rect(breaks[-nB], 0, breaks[-1], y, col = "blue", ...)
+}
+```
+
+```{r echo=F, include=F}
+# Pairs COR
+z.s <- cbind(cal$index, cal$system_stability, cal$size_recode, cal$water_clarity_recode, cal$substrate_shade_recode, cal$canopy_cover_recode, cal$lwd_recode, cal$lpe, cal$lpe_method)   
+colnames(z.s) <- c("index", "stability", "size", "water_clarity", "substrate_shade", "canopy_cover", "lwd", "lpe", "lpe_method")
+```
+
+Examination of static variables only indicates high collinearity between several variables (*r*>0.6; Figure 3). However, in the initial global model, VIF scores are exceptionally high for stream size (Table 1a). Step-wise variable removal based on highest VIF values indicates that the best combination of explanatory variables to reduce multicollinearity moving forward is: stability, water clarity, substrate shade, LWD, LPE, and LPE method; i.e., removing stream size. Note that canopy cover was not considered moving forward as it can vary annually with fires, pests, etc.
+
+```{r echo=F, warning=F, message=F}
+pairs(z.s, lower.panel=panel.smooth, upper.panel=panel.cor.fx, diag.panel=panel.hist.fx, cex=1, pch=16)
+```
+
+<font size="2"> *Fig. 3. Pairs plot for STATIC variables indicating level of collinearity between each variable pairing. Histograms of data observations given on the diagonal. Smoothed lines (red) generated using default loess smoother. No data transformations. Ordinal categorical variables re-coded as integers for purposes of plotting.* </font>
 
 <br>
 
-### 0. Missing values ###
+```{r include=F, echo=F}
+#--------- VIF tests - stepwise removal of highly collinear predictors (cutoff VIF>3)
+### just static vars
+
+# global
+vif.stat.1 <- lm(index ~ system_stability + size_recode + water_clarity_recode + substrate_shade_recode + lwd_recode + lpe + lpe_method, data=cal)
+
+#no size
+vif.stat.2 <- lm(index ~ system_stability + water_clarity_recode + substrate_shade_recode + lwd_recode + lpe + lpe_method, data=cal)       
+```
+
+<font size="2"> *Table 1. Variance Inflation Factor (VIF) scores for global models with STATIC variables. Note Table 3a shows the VIF scores for the global model; Table 3b is not shown but removes the highest VIF score to result in the remaining variables exhibiting VIF < 3.* </font>
+
+```{r echo=F, warning=F, message=F}
+knitr::kable(cbind("Table"=c("3a", "(global)", rep("",5)), dplyr::as_data_frame(vif(vif.stat.1), rownames = "Variable")))
+#knitr::kable(cbind("Table"=c("3b", "(global)", "(-size)", rep("",3)), dplyr::as_data_frame(vif(vif.stat.2), rownames = "Variable")))
+```
+
+<br>
+
+#### **Relationships** ####  
+
+```{r echo=F, include=F}
+# FUNCTIONS FOR THIS SECTION: 
+
+#-------- Custom relationship plot function
+relation.fx <- function(x_var, ann_x, ann_y, ann_lab, x_lab){
+  ggplot(cal%>%filter(!is.na(.data[[x_var]]), !grepl("CANT", .data[[x_var]])), aes(x=.data[[x_var]], y=index)) +
+    geom_point(shape=21, size=3, fill="gray70", alpha=0.6) +
+    geom_smooth(method = "lm", se=F, colour="green", size=1, alpha=0.5) +
+    geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs"), se=F, colour="red", size=1, alpha=0.5) +
+    geom_smooth(method = "loess", se=F, colour="blue", size=1, alpha=0.5) +
+    annotate("text", x=ann_x, y=ann_y, label=ann_lab, fontface=2) +
+    labs(x=x_lab, y="Index") +
+    theme_bw() + 
+    theme(legend.position=c(0.1,0.85),
+      legend.background = element_rect(colour="black"),
+      legend.spacing.y = unit(0.1, "mm"),
+      legend.spacing.x = unit(0.1, "mm"),
+      legend.margin=margin(t=0.1, r=0.1, b=0.1, l=0.1, unit="cm"),
+      legend.key.size = unit(0.5, "cm"),
+      axis.text=element_text(colour="black"))
+  }
+```
+
+There is evidence of relationships between the index and most variables (Fig 4). Smoothed lines are shown just for comparison to previous graphs and for future considerations with GAM use, but are not considered in this GLM exercise. 
+
+```{r echo=F, warning=F, message=F}
+ggarrange(relation.fx("system_stability", "Stable", 17, "", "Stability"),
+          relation.fx("water_clarity_recode", 1, 17, "", "Water clarity"), 
+          relation.fx("substrate_shade_recode", 1, 17, "", "Substrate shade"),
+          relation.fx("lwd_recode", 1, 17, "", "LWD"),
+          relation.fx("lpe", 1, 17, "", "LPE"),
+          relation.fx("lpe_method", 1, 17, "", "LPE method"),
+          common.legend = T)
+```
+
+<font size="2"> *Fig 4. Relationship plots for static variables following step-wise VIF variable removal. Lines are linear (green), cubic spline (red) and loess (blue) smoothing.* </font>
+
+<br>
+
+<br>
+
+<br>
+
+### **Model development** ###
+
+----------------
+
+The following is simply an exercise in model development; it does not address how to handle missing values. Previous work with GAMs appears to have issues with the level of predictors and effective degrees of freedom, models do not converge. Attempt with GLMM and static variables only.
+
+Based on the VIF process, the predictor variables are:    
+
+* Stability    
+* Water clarity   
+* Substrate shade   
+* LWD   
+* LPE   
+* LPE method    
+
+To test this process, the model was fit to a random selection of 80% of the data and validated on a random 20%.
+
+```{r eval=F}
+Global model formula: 
+m.global <- glm(index ~ system_stability + large_woody_debris + water_clarity + substrate_shade + lpe_sc + lpe_method, data=cal.80,  family=Gamma(link="inverse"), na.action = "na.fail")
+```
+
+```{r echo=F, include=F}
+# Randomly select 80% of data. MUST RUN set.seed(1) first for reproducibility! 
+# note addition of term from below - rescaling 'lpe'
+set.seed(1)
+cal.80 <- cal %>% 
+  slice_sample(prop=0.8) %>%
+  mutate(hpe = ifelse(is.na(hpe), hpe_escdb, hpe)) %>%
+  mutate(index = ifelse(is.na(index), hpe/lpe, index)) %>%
+  print()
+cal.80.names <- cal.80$usid
+
+# Filter remaining 20% of data for model validation
+cal.20 <- cal %>%
+  filter(!usid%in%c(cal.80.names)) %>%
+  print()
+
+#--------- FIT MODELS
+# model suggests re-scaling 'lpe' - see above code chunk 
+
+m.global <- glm(index ~ system_stability + large_woody_debris + water_clarity + substrate_shade + lpe_sc + lpe_method, data=cal.80,  family=Gamma(link="inverse"), na.action = "na.fail")
+summary(m.global)
+
+# Run all combinations of models
+m.dredge <- dredge(m.global, beta="none", rank="AICc")
+summary(m.dredge)
+
+
+#--------- EVALUATE MODELS
+# 1.1. TOP MODEL SET: dAIC<4  
+model.sel.dAIC4 <- get.models(m.dredge, subset=delta<4)                    # note essentially identical outcome with weight<=0.95
+models4 <- model.sel(model.sel.dAIC4)
+model.table.dAIC4 <- subset(m.dredge, delta<4)                             # just model table for different viewing options
+# 1.2. MODEL-AVERAGE TOP MODEL SET: dAIC<4
+model.avg.dAIC4 <- model.avg(model.sel.dAIC4)
+
+# 2. TOP MODEL: dAIC=0
+model.sel.top <- get.models(m.dredge, subset=1)
+m.top <- glm(index ~ large_woody_debris + lpe_sc + system_stability + water_clarity, data=cal.80, family=Gamma(link="inverse"), na.action="na.fail")
+
+# Model tables for visualizing
+model.table.dAIC4 <- subset(m.dredge, delta<4)
+model.table.top <- subset(m.dredge, subset=1)
+
+
+#--------- PREDICT/VALIDATE MODEL
+# Based on model-averaged parameters: 
+cal.20$index_avgmod4 <- predict(model.avg.dAIC4, type="link", backtransform=T, full=F, cal.20)
+cal.20$index_topmod <- predict(m.top, type="link", backtransform=T, full=T, cal.20)
+```
+
+Models were ranked based on AIC corrected for small sample size (AICc), and top models were identified as those with dAICc < 4 (Table 2). The top model (dAICc=0) contained terms for LWD, LPE, system_stability, and water clarity (LPE method and substrate_shade were excluded). The top model had approximately 1.5-times the weight of evidence compared to the second model (w=0.33 and w=0.21, respectively). The top model accounted for 33% of the weight of evidence in the top set of models (Table 2). 
+
+<br>
+
+<font size="2"> *Table 2. Set of top models with dAICc ("delta") < 4.* </font>
+
+```{r echo=F, warning=F, message=F}
+# Top models table
+knitr::kable(model.table.dAIC4)
+#knitr::kable(cbind("Model"=row.names(models4), dplyr::as_data_frame(models4)%>%select(-family)))
+```
+
+<br>
+
+From the top model set we were able to calculate Relative Variable Importance (RVI) values as we fit a balanced set of candidate models. Large woody debris, LPE and system_stability were all the most important (RVI=1), which was 1.3-times as important as water clarity, and approx. 2.5 to 3 times as important as substrate shade and LPE method, respectively (Table 3). It is surprising to have 3 variables tie for complete importance (RVI=1). 
+
+<br>
+
+<font size="2"> *Table 3. Relative variable importance of variables included in the model-averaged set of top models (dAICc < 4).*</font>
+
+```{r echo=F, warning=F, message=F}
+# RVI table
+knitr::kable(cbind("Variable name"=rownames(as.data.frame(cbind(model.avg.dAIC4$sw))),
+                   as.data.frame(cbind(model.avg.dAIC4$sw),row.names=F)%>%rename(`Relative importance`=V1)))
+```
+
+Due to the relatively high support for the top model, and a reasonable selection of models comprising the set of top models (dAIC < 4), we predicted expansion factors from both the top model and from model-averaging the set of top models. Model averaging is typically the preferred method of choosing model parameters as it retains more complexity and parameters to explain ecological phenomena. However, as we are interested in the best predictive model, rather than the most robust explanatory power, we assessed both methods for deriving model-predicted expansion factors. 
+
+```{r echo=F, include=F}
+####### Plot background work, not shown ###
+# PLOT PREDICTIONS: INDICES AND POPULATION SIZES
+# "True" index (hpe/lpe) vs. modelled index - note top model performs poorly compared to model-averaged and is not shown
+index<-ggplot() +
+  geom_hline(yintercept = 1.8, colour="red") +
+  geom_bar(data=cal.20, aes(x=factor(n_row), y=index), stat="identity", colour="black", fill="white") +
+  geom_bar(data=cal.20, aes(x=factor(n_row), y=index_avgmod4), stat="identity", fill="blue", alpha=0.8, width=0.7) +
+  theme_bw() 
+
+# Implications of "true" population size (HPE) vs. resulting 1.8-expanded HPE and model-expanded HPE
+cal.20 <- cal.20 %>% 
+  mutate(pop_est_18 = lpe*1.8,
+         pop_est_avgmod4 = lpe*index_avgmod4,
+         pop_est_topmod = lpe*index_topmod)
+
+pop_ests<-ggplot() +
+  geom_bar(data=cal.20, aes(x=factor(n_row), y=hpe), stat="identity", colour="gray70", fill="gray70", width=0.8) +
+  geom_bar(data=cal.20, aes(x=factor(n_row), y=pop_est_18), stat="identity", colour="black", fill="white", alpha=0.5, width=0.6) +
+  geom_bar(data=cal.20, aes(x=factor(n_row), y=pop_est_avgmod4), stat="identity", fill="blue", alpha=0.5, width=0.6) +
+  geom_bar(data=cal.20, aes(x=factor(n_row), y=pop_est_topmod), stat="identity", fill="green", alpha=0.5, width=0.6) +
+  labs(y="Population estimate", x="Survey")
+
+
+# PLOT PREDICTIONS: DIFFERENCES BETWEEN ESTIMATES
+# Only doing top model set as the top model solo didn't perform well. 
+DBEs <- cal.20 %>%
+  dplyr::select(usid, n_row, hpe, pop_est_18, pop_est_avgmod4) %>%
+  pivot_longer(cols=c(pop_est_18, pop_est_avgmod4), names_to = "expand_type", values_to = "pop_est") %>%
+  mutate(difference=hpe-pop_est,
+         pDBE=(difference/hpe)*100) %>%
+  print()
+
+dDBE<-ggplot(DBEs, aes(x=factor(n_row), y=difference, group=expand_type, fill=expand_type)) +
+  geom_hline(yintercept = 0, colour="black") +
+  geom_bar(stat="identity", position="dodge", width=0.5) +
+  scale_fill_manual(labels = c("lpe*1.8", "lpe*model-averaged predicted index"), values=c("gray70", "turquoise")) +
+  scale_colour_manual(labels = c("lpe*1.8", "lpe*model-averaged predicted index"), values=c("transparent", "turquoise")) +
+  labs(y="# over-est        # under-est", fill="expansion method", x="Survey") +
+  theme_bw() +
+  theme(legend.position = c(0.35,0.15),
+        legend.background = element_rect(colour="black"),
+        legend.key.height = unit(2, "mm"),
+        legend.key.width = unit(3, "mm"),
+        legend.text = element_text(size=8),
+        legend.title = element_text(size=9, face="bold"))
+
+pDBE<-ggplot(DBEs, aes(x=factor(n_row), y=pDBE, group=expand_type, fill=expand_type, colour=expand_type)) +
+  geom_hline(yintercept = 0, colour="black") +
+  geom_bar(position="dodge", stat="identity", width=0.5) +
+  scale_fill_manual(labels = c("lpe*1.8", "lpe*model-averaged predicted index"), values=c("gray70", "turquoise")) +
+  scale_colour_manual(labels = c("lpe*1.8", "lpe*model-averaged predicted index"), values=c("transparent", "turquoise")) +
+  labs(y="% over-est      % under-est", fill="expansion method", x="Survey",
+       caption="Fig 6. Discrepancy in a) number of fish and b) proportion of population between the 1.8-expanded population \nestimate and the model-estimated population estimate compared to the known HPE.") +
+  theme_bw() +
+  theme(plot.caption = element_text(hjust=0, face="italic"),
+        legend.position = c("none"))
+
+##### 3. SUMMARY STATS: 
+# cases where model was best based on # fish (not proportion - but gives the same result in this case)
+winners <- DBEs %>%
+  group_by(usid) %>%
+  mutate(winner = ifelse(min(difference)==difference, "WIN", ""))%>%
+  filter(winner=='WIN') %>%
+  group_by(expand_type) %>%
+  summarize(n=n()) %>%
+  print()
+#######
+#######
+```
+
+<br>
+
+<span style="text-decoration:underline"> **Model validation** </span>
+
+Based on the two methods of model-derived expansion factors (top model and model-averaged set), it is apparent that model-averaging the top set of models (dAIC < 4) provided better expanded population estimates compared to the top model, which consistently underestimated the population size (Figure 5). When assessing the differences in population estimate (i.e., number of fish) between the known population estimate and the two methods of expansion factors, the model-averaged predicted expansion factor performed better than the 1.8 expansion factor in `r winners[winners$expand_type=="pop_est_avgmod4",]$n` out of `r sum(winners$n)` cases (`r (winners[winners$expand_type=="pop_est_avgmod4",]$n/sum(winners$n))*100`%), i.e., the predicted population estimate was closer to the real population estimate (Figure 5). The model over-estimated the population size for `r pull(count(DBEs %>% filter(expand_type=="pop_est_avgmod4" & difference<0)))` surveys and underestimated the population size for `r pull(count(DBEs %>% filter(expand_type=="pop_est_avgmod4" & difference>0)))` surveys. Similarly, the 1.8-expansion factor over-estimated for `r pull(count(DBEs %>% filter(expand_type=="pop_est_18" & difference<0)))` surveys and underestimated for `r pull(count(DBEs %>% filter(expand_type=="pop_est_18" & difference>0)))` surveys. 
+
+```{r echo=F, warning=F, message=F}
+ggplot() +
+  geom_bar(data=cal.20, aes(x=factor(n_row), y=hpe), stat="identity", fill="gray60",  alpha=0.7) +
+  geom_bar(data=cal.20, aes(x=factor(n_row), y=pop_est_18), stat="identity", fill="white", alpha=0.4) +
+  geom_bar(data=cal.20, aes(x=factor(n_row), y=pop_est_avgmod4), stat="identity", fill="turquoise", alpha=0.7, width=0.5) +
+  geom_bar(data=cal.20, aes(x=factor(n_row), y=pop_est_topmod), stat="identity", fill="red", alpha=0.7, width=0.5) +
+  #geom_point(data=DBEs%>%group_by(usid)%>%mutate(winner = ifelse(min(difference)==difference, "WIN", ""))%>%filter(winner=='WIN'), 
+  #           aes(x=factor(n_row), y=))
+  labs(y="Population estimate", x="Survey number", caption="Fig 5. High-precision population estimate (dark gray) compared to the low-precision estimate expanded by 1.8 \nexpansion factor (light gray), the top model predicted expansion factor (red), and the model-averaged predicted \nexpansion factor (turquoise) for 20% of the dataset.") +
+  theme_bw() +
+  theme(plot.caption = element_text(hjust=0, face="italic"),
+        axis.text = element_text(colour="black"),
+        axis.title = element_text(face="bold"))
+```
+
+<br>
+
+We compared the implications of the model-predicted expansion factors by comparing the # of fish over- or under-estimated by the model and the 1.8-expansion factor in reference to the known population estimate (i.e. the HPE) (Figure 6a), and then considered what proportion of the total population that discrepancy represented (Fig 6b). In overall goal of Figure 6 is to see much smaller turqouise bars than gray bars, indicating a smaller discrepancy in the # of fish (and subsequent % of population) predicted by the model versus the 1.8-expansion. As stated above the model out-performs the 1.8 expansion in most cases, and tends to over- or under- estimate in the same direction as the 1.8 expansion factor. It ony produced large discrepancies in the number of fish in a few cases (e.g. Survey #77), and in some cases this did not end up representing much of the population. In cases where the discrepancies were >50% of the population, the number of fish mis-predicted was very small; this is to be expected in small populations as a change in a small number of fish represents a large proportion of the population. 
+
+<br>
+
+```{r echo=F, warning=F, message=F}
+ggarrange(dDBE, pDBE, nrow=2)
+```
+
+<br>
+
+<br>
+
+<br>
+
+### **Harrison Exclusion** ### 
+
+----------------
+
+The Harrison River is a notoriously difficult system to enumerate. It has had a relatively recent population increase, and accounts for several cases of very high discrepancies between LPE and HPE (Figure 1). It is difficult to count visually, and difficult to enumerate properly via mark-recapture. 
+
+As such, we examined whether the above model fit would be improved if the Harrison River was excluded and it received "special attention". Preliminary and summarized model fit results are shown below, as the aforementioned methods all still apply to this exercise. 
+
+```{r echo=F, include=F}
+# Randomly select 80% of data. MUST RUN set.seed(1) first for reproducibility! 
+# note addition of term from below - rescaling 'lpe'
+set.seed(2)
+cal.80.noH <- cal %>% 
+  filter(gazetted_stream_name != "Harrison River") %>%
+  slice_sample(prop=0.8) %>%
+  mutate(hpe = ifelse(is.na(hpe), hpe_escdb, hpe)) %>%
+  mutate(index = ifelse(is.na(index), hpe/lpe, index)) %>%
+  print()
+cal.80.noH.names <- cal.80.noH$usid
+
+# Filter remaining 20% of data for model validation
+cal.20.noH <- cal %>%
+  filter(gazetted_stream_name != "Harrison River") %>%
+  filter(!usid%in%c(cal.80.noH.names)) %>%
+  print()
+
+#--------- FIT MODELS
+# model suggests re-scaling 'lpe' - see above code chunk 
+
+m.global.noH <- glm(index ~ system_stability + large_woody_debris + water_clarity + substrate_shade + lpe_sc + lpe_method, data=cal.80.noH,  family=Gamma(link="inverse"), na.action = "na.fail")
+summary(m.global.noH)
+
+# Run all combinations of models
+m.dredge.noH <- dredge(m.global.noH, beta="none", rank="AICc")
+summary(m.dredge.noH)
+
+
+#--------- EVALUATE MODELS
+# 1.1. TOP MODEL SET: dAIC<4  
+model.sel.dAIC4.noH <- get.models(m.dredge.noH, subset=delta<4)                    # note essentially identical outcome with weight<=0.95
+models4.noH <- model.sel(model.sel.dAIC4.noH)
+model.table.dAIC4.noH <- subset(m.dredge.noH, delta<4)                             # just model table for different viewing options
+# 1.2. MODEL-AVERAGE TOP MODEL SET: dAIC<4
+model.avg.dAIC4.noH <- model.avg(model.sel.dAIC4.noH)
+
+# 2. TOP MODEL: dAIC=0
+model.sel.top.noH <- get.models(m.dredge.noH, subset=1)
+m.top.noH <- glm(index ~ large_woody_debris + lpe_method + lpe_sc + system_stability, data=cal.80.noH, family=Gamma(link="inverse"), na.action="na.fail")
+
+# Model tables for visualizing
+model.table.dAIC4.noH <- subset(m.dredge.noH, delta<4)
+model.table.top.noH <- subset(m.dredge.noH, subset=1)
+
+
+#--------- PREDICT/VALIDATE MODEL
+# Based on model-averaged parameters: 
+cal.20.noH$index_avgmod4 <- predict(model.avg.dAIC4.noH, type="link", backtransform=T, full=F, cal.20.noH)
+cal.20.noH$index_topmod <- predict(m.top.noH, type="link", backtransform=T, full=T, cal.20.noH)
+```
+
+The top model (dAICc=0) contained terms for LWD, LPE method, LPE, and system_stability (water clarity and substrate_shade were excluded). The top model accounted for 48% of the weight of evidence in the top set of models and had over 2-times the weight of evidence compared to the second and third models (w=48 versis w=0.22 and w=0.21, respectively; Table 4). 
+
+<br>
+
+<font size="2"> *Table 4. Set of top models with dAICc ("delta") < 4 for the dataset excluding the Harrison River.* </font>
+
+```{r echo=F, warning=F, message=F}
+# Top models table
+knitr::kable(model.table.dAIC4.noH)
+#knitr::kable(cbind("Model"=row.names(models4), dplyr::as_data_frame(models4)%>%select(-family)))
+```
+
+<br>
+
+From the top model set we were able to calculate Relative Variable Importance (RVI) values as we fit a balanced set of candidate models. In contrast to above, LPE method, LPE and system stability were all the most important (RVI=1), which was 1.4-times as important as large woody debris, and approx. 3 times as important as water clarity (Table 5). It is surprising to have 3 variables tie for complete importance (RVI=1). 
+
+<br>
+
+<font size="2"> *Table 5. Relative variable importance of variables included in the model-averaged set of top models (dAICc < 4) for the dataset excluding the Harrison River.*</font>
+
+```{r echo=F, warning=F, message=F}
+# RVI table
+knitr::kable(cbind("Variable name"=rownames(as.data.frame(cbind(model.avg.dAIC4.noH$sw))),
+                   as.data.frame(cbind(model.avg.dAIC4.noH$sw),row.names=F)%>%rename(`Relative importance`=V1)))
+```
+
+```{r echo=F, include=F}
+####### Plot background work, not shown ###
+# PLOT PREDICTIONS: INDICES AND POPULATION SIZES
+# "True" index (hpe/lpe) vs. modelled index - note top model performs poorly compared to model-averaged and is not shown
+index.noH<-ggplot() +
+  geom_hline(yintercept = 1.8, colour="red") +
+  geom_bar(data=cal.20.noH, aes(x=factor(n_row), y=index), stat="identity", colour="black", fill="white") +
+  geom_bar(data=cal.20.noH, aes(x=factor(n_row), y=index_avgmod4), stat="identity", fill="blue", alpha=0.8, width=0.7) +
+  theme_bw() 
+
+# Implications of "true" population size (HPE) vs. resulting 1.8-expanded HPE and model-expanded HPE
+cal.20.noH <- cal.20.noH %>% 
+  mutate(pop_est_18 = lpe*1.8,
+         pop_est_avgmod4 = lpe*index_avgmod4,
+         pop_est_topmod = lpe*index_topmod)
+
+pop_ests.noH<-ggplot() +
+  geom_bar(data=cal.20.noH, aes(x=factor(n_row), y=hpe), stat="identity", colour="gray70", fill="gray70", width=0.8) +
+  geom_bar(data=cal.20.noH, aes(x=factor(n_row), y=pop_est_18), stat="identity", colour="black", fill="white", alpha=0.5, width=0.6) +
+  geom_bar(data=cal.20.noH, aes(x=factor(n_row), y=pop_est_avgmod4), stat="identity", fill="blue", alpha=0.5, width=0.6) +
+  geom_bar(data=cal.20.noH, aes(x=factor(n_row), y=pop_est_topmod), stat="identity", fill="green", alpha=0.5, width=0.6) +
+  annotate(geom="text", x=20, y=300000, label="Excluding Harrison River") +
+  labs(y="Population estimate", x="Survey")
+
+
+# PLOT PREDICTIONS: DIFFERENCES BETWEEN ESTIMATES
+# Only doing top model set as the top model solo didn't perform well. 
+DBEs.noH <- cal.20.noH %>%
+  dplyr::select(usid, n_row, hpe, pop_est_18, pop_est_avgmod4) %>%
+  pivot_longer(cols=c(pop_est_18, pop_est_avgmod4), names_to = "expand_type", values_to = "pop_est") %>%
+  mutate(difference=hpe-pop_est,
+         pDBE=(difference/hpe)*100) %>%
+  print()
+
+dDBE.noH<-ggplot(DBEs.noH, aes(x=factor(n_row), y=difference, group=expand_type, fill=expand_type)) +
+  geom_hline(yintercept = 0, colour="black") +
+  geom_bar(stat="identity", position="dodge", width=0.5) +
+  scale_fill_manual(labels = c("lpe*1.8", "lpe*model-averaged predicted index"), values=c("gray70", "turquoise")) +
+  scale_colour_manual(labels = c("lpe*1.8", "lpe*model-averaged predicted index"), values=c("transparent", "turquoise")) +
+  labs(y="# over-est        # under-est", fill="expansion method", x="Survey") +
+  annotate(geom="text", x=20, y=140000, label="Excluding Harrison River") +
+  theme_bw() +
+  theme(axis.text = element_text(colour="black"),
+        legend.position = c(0.35,0.15),
+        legend.background = element_rect(colour="black"),
+        legend.key.height = unit(2, "mm"),
+        legend.key.width = unit(3, "mm"),
+        legend.text = element_text(size=8),
+        legend.title = element_text(size=9, face="bold"))
+
+pDBE.noH<-ggplot(DBEs.noH, aes(x=factor(n_row), y=pDBE, group=expand_type, fill=expand_type, colour=expand_type)) +
+  geom_hline(yintercept = 0, colour="black") +
+  geom_bar(position="dodge", stat="identity", width=0.5) +
+  scale_fill_manual(labels = c("lpe*1.8", "lpe*model-averaged predicted index"), values=c("gray70", "turquoise")) +
+  scale_colour_manual(labels = c("lpe*1.8", "lpe*model-averaged predicted index"), values=c("transparent", "turquoise")) +
+  labs(y="% over-est      % under-est", fill="expansion method", x="Survey",
+       caption="Fig 8. Discrepancy in a) number of fish and b) proportion of population between the 1.8-expanded population \nestimate and the model-estimated population estimate compared to the known HPE. Excludes the Harrison River.") +
+  annotate(geom="text", x=15, y=80, label="Excluding Harrison River") +
+  theme_bw() +
+  theme(axis.text = element_text(colour="black"),
+        plot.caption = element_text(hjust=0, face="italic"),
+        legend.position = c("none"))
+
+##### 3. SUMMARY STATS: 
+# cases where model was best based on # fish (not proportion - but gives the same result in this case)
+winners.noH <- DBEs.noH %>%
+  group_by(usid) %>%
+  mutate(winner = ifelse(min(difference)==difference, "WIN", ""))%>%
+  filter(winner=='WIN') %>%
+  group_by(expand_type) %>%
+  summarize(n=n()) %>%
+  print()
+#######
+#######
+```
+
+<br>
+
+<span style="text-decoration:underline"> **Model validation** </span>
+
+As above, we predicted expansion factors from both the top model and from model-averaging the set of top models. Based on the two methods of model-derived expansion factors (top model and model-averaged set), model-averaging the top set of models (dAIC < 4) again provided better expanded population estimates compared to the top model, which consistently underestimated the population size (Figure 7). When assessing the differences in population estimate (i.e., number of fish) between the known population estimate and the two methods of expansion factors, the model-averaged predicted expansion factor performed better than the 1.8 expansion factor in `r winners.noH[winners.noH$expand_type=="pop_est_avgmod4",]$n` out of `r sum(winners.noH$n)` cases (`r (winners.noH[winners.noH$expand_type=="pop_est_avgmod4",]$n/sum(winners.noH$n))*100`%), i.e., the predicted population estimate was closer to the real population estimate (Figure 4). The model over-estimated the population size for `r pull(count(DBEs.noH %>% filter(expand_type=="pop_est_avgmod4" & difference<0)))` surveys and underestimated the population size for `r pull(count(DBEs.noH %>% filter(expand_type=="pop_est_avgmod4" & difference>0)))` surveys. Similarly, the 1.8-expansion factor over-estimated for `r pull(count(DBEs.noH %>% filter(expand_type=="pop_est_18" & difference<0)))` surveys and underestimated for `r pull(count(DBEs.noH %>% filter(expand_type=="pop_est_18" & difference>0)))` surveys. 
+
+```{r echo=F, message=F, warning=F}
+ggplot() +
+  geom_bar(data=cal.20.noH, aes(x=factor(n_row), y=hpe), stat="identity", fill="gray60",  alpha=0.7) +
+  geom_bar(data=cal.20.noH, aes(x=factor(n_row), y=pop_est_18), stat="identity", fill="white", alpha=0.4) +
+  geom_bar(data=cal.20.noH, aes(x=factor(n_row), y=pop_est_avgmod4), stat="identity", fill="turquoise", alpha=0.7, width=0.5) +
+  geom_bar(data=cal.20.noH, aes(x=factor(n_row), y=pop_est_topmod), stat="identity", fill="red", alpha=0.7, width=0.5) +
+  #geom_point(data=DBEs%>%group_by(usid)%>%mutate(winner = ifelse(min(difference)==difference, "WIN", ""))%>%filter(winner=='WIN'), 
+  #           aes(x=factor(n_row), y=))
+  labs(y="Population estimate", x="Survey number", caption="Fig 7. High-precision population estimate (dark gray) compared to the low-precision estimate expanded by 1.8 \nexpansion factor (light gray), the top model predicted expansion factor (red), and the model-averaged predicted \nexpansion factor (turquoise) for 20% of the dataset excluding the Harrison River.") +
+  annotate(geom="text", x=15, y=300000, label="Excluding Harrison River") +
+  theme_bw() +
+  theme(plot.caption = element_text(hjust=0, face="italic"),
+        axis.text = element_text(colour="black"),
+        axis.title = element_text(face="bold"))
+```
+
+<br>
+
+We again compared the implications of the model-predicted expansion factors by comparing the # of fish over- or under-estimated by the model and the 1.8-expansion factor in reference to the known population estimate (i.e. the HPE) (Figure 8a), and then considered what proportion of the total population that discrepancy represented (Fig 8b). In overall goal of Figure 8 is to see much smaller turqouise bars than gray bars, indicating a smaller discrepancy in the # of fish (and subsequent % of population) predicted by the model versus the 1.8-expansion. As stated above the model out-performs the 1.8 expansion in most cases, but may tend to over-estimate the population size more frequently (Fig 19b). It ony produced large discrepancies in the number of fish in a few cases (e.g. Survey #77), and in some cases this did not end up representing much of the population. In cases where the discrepancies were >50% of the population, the number of fish mis-predicted was very small; this is to be expected in small populations as a change in a small number of fish represents a large proportion of the population. 
+
+<br>
+
+```{r echo=F, warning=F, message=F}
+ggarrange(dDBE.noH, pDBE.noH, nrow=2)
+```
+
+<br>
+
+<br>
+
+<br>
+
+<br>
+
+<br>
+
+<br>
+
+<br>
+
+<br>
+
+<br>
+
+----------------
+
+## Appendices ##
+
+----------------
+
+Some of the content below is additional exploratory work. The big issue is that the dynamic environmental variables are missing a considerable number of data points and are not missing at random. I went through the exercise of examining relationships, VIF/multicollinearity etc. as an informative process, but it ultimately isn't factored in to the model above. 
+
+<br>
+
+### Appendix 1: Missing values (Step 0) ###
+
+----------------
 
 Unfortunately, not all covariates are available for all years/systems of data (Figure 6). While the static environmental variables inherently have no missing values, the dynamic (and likely more representative) environmental variables have many missing values, often confounded with time. For example, OE was only recorded from 2012 onward; after 2012 OE values are MCAR, while prior to 2012 they are MNAR (Fig 6).
 
@@ -342,32 +902,33 @@ ggplot() +
   theme(axis.text.y = element_text(size=5))
 ```
 
-*Fig 6. All static (blue) and dynamic (pink) variables available for each survey. Points indicate observations, spaces indicate missing observations. Surveys given in order of year.*
+<font size="2"> *Fig A1.1. All static (blue) and dynamic (pink) variables available for each survey. Points indicate observations, spaces indicate missing observations. Surveys given in order of year.* </font>
 
-It should be noted that while Figure 6 displays *all* variables, some are not appropriate for use. Canopy cover (and possibly LWD) are not truly static covariates; while some systems are inherently more woody/bushy than others, they can change annually and rapidly with forest fires, bank sloughing, flow levels, etc. A prime example is Nadina River before and after complete burns from forest fires. We do not currently have the temporal or spatial resolution in the data to capture such fine-scale landscape change effects on calibration indices. 
+It should be noted that while Figure A1.1 displays *all* variables, some are not appropriate for use. Canopy cover (and possibly LWD) are not truly static covariates; while some systems are inherently more woody/bushy than others, they can change annually and rapidly with forest fires, bank sloughing, flow levels, etc. A prime example is Nadina River before and after complete burns from forest fires. We do not currently have the temporal or spatial resolution in the data to capture such fine-scale landscape change effects on calibration indices. 
 
 <br>
 
 <span style="text-decoration:underline"> **Missing values for dynamic variables** </span>
 
-No concern lies with missing values of static predictor variables, only dynamic ones. Further examination of only missing dynamic variable values using the *finalfit* package confirms values are not always missing at random. For any given variable, we are missing anywhere from 19-75% of observations (Table 1). Note that some indices are currently missing due to outstanding errors to confirm. Year is included as it will be used as a random effect. 
+No concern lies with missing values of static predictor variables, only dynamic ones. Further examination of only missing dynamic variable values using the *finalfit* package confirms values are not always missing at random. For any given variable, we are missing anywhere from 19-75% of observations (Table not shown). Note that some indices are currently missing due to outstanding errors to confirm. Year is included as it will be used as a random effect. 
 
 ```{r echo=F, include=F}
 explanatory = c("year", "bankfull", "brightness", "cloud_cover", "fish_vis",  "water_vis", "OE", "water_discharge")
 dependent = "index"
-```
 
-*Table 1. Summary of missing values for dynamic variables.*
-
-```{r echo=F, warning=F, message=F}
+# Table A1.1. Summary of missing values for dynamic variables. 
 cal %>% ff_glimpse(dependent, explanatory)
 ```
+
 ```{r echo=F, message=F, warning=F}
 # Clearer visual summary of missing values. 
 cal %>% missing_plot(dependent, explanatory)
 ```
 
-*Fig 7. Complete (navy) and missing (light blue) values for dynamic predictor variables. Observation is equivalent to individual surveys, which are roughly ordered by year based on Excel data entry (from 1988 to 2020).*
+<font size="2"> *Fig A1.2. Complete (navy) and missing (light blue) values for dynamic predictor variables. Observation is equivalent to individual surveys, which are roughly ordered by year based on Excel data entry (from 1988 to 2020).* </font>
+
+<br>
+
 
 ```{r echo=F, message=F, warning=F, include=F}
 # NA pattern figure; not clear how to interpret but shows clear patterns. 
@@ -377,13 +938,13 @@ cal %>%
   summary_factorlist(dependent, explanatory, na_include=T, p=T)    # doesn't change if na_include=F
 ```
 
-We can see further clear interactions between missing values and the "significant" effect (untested) of year in almost all cases except for water discharge and index (Figure 8 first column). It is also clear that missing cases in any of the 'wetnote' variables (bankfull, brightness, cloud cover, fish/water vis) are clearly related to NA values in any of those given variables; this makes inherent sense as it is most likely that if one variable was missed, they were all missed (i.e., wetnote environmentals were not completed). The initiation of consistently recording the full suite of "modern" wetnote environmentals was probably fairly recently (early 2000s), as evident by the break between box plots in the 'year' column relative to missing values in those variables (rows 2 to 6) (Figure 8). 
+We can see further clear interactions between missing values and the "significant" effect (untested) of year in almost all cases except for water discharge and index (Figure A1.3 first column). It is also clear that missing cases in any of the 'wetnote' variables (bankfull, brightness, cloud cover, fish/water vis) are clearly related to NA values in any of those given variables; this makes inherent sense as it is most likely that if one variable was missed, they were all missed (i.e., wetnote environmentals were not completed). The initiation of consistently recording the full suite of "modern" wetnote environmentals was probably fairly recently (early 2000s), as evident by the break between box plots in the 'year' column relative to missing values in those variables (rows 2 to 6) (Figure A1.3). 
 
 ```{r echo=F, warning=F, message=F}
 cal %>% missing_pairs(explanatory, dependent, position="fill")
 ```
 
-*Fig 8. Matrix relationships between missing cases in each variable (indexed along the right-hand side vertical boxes) and the entire suite of observations for each variable (indexed along the top row of boxes). Gray indicates missing observations. Bars for categorical variables are represented as proportions of the total number of observations relating to missing values; e.g., 100% of the missing bankfull observations are related to 100% of the NA values in bankfull.*
+<font size="2"> *Fig A1.3. Matrix relationships between missing cases in each variable (indexed along the right-hand side vertical boxes) and the entire suite of observations for each variable (indexed along the top row of boxes). Gray indicates missing observations. Bars for categorical variables are represented as proportions of the total number of observations relating to missing values; e.g., 100% of the missing bankfull observations are related to 100% of the NA values in bankfull.* </font>
 
 <br>
 
@@ -410,7 +971,9 @@ As stated, there is not much that can be done about missing dynamic variable val
 
 <br>
 
-### 1.1. Data exploration (all) ### 
+### Appendix 2: Data exploration (Step 1 Zuur) ### 
+
+----------------
 
 *A.2.1 Step 1: Outliers in Zuur et al 2009.  Cleveland dotchart, box/bar plots of response and explanatory variables etc.*
 
@@ -436,8 +999,6 @@ barchart_fx <- function(x_var){
     geom_bar(stat="identity", colour="black", fill="gray20")
 }
 ```
-
-<br>
 
 Static variables:    
 
@@ -482,14 +1043,14 @@ ggarrange(dotchart_fx(bankfull_recode, n_row, "gray20"),
           dotchart_fx(OE, n_row, "gray20"),
           dotchart_fx(water_discharge, n_row, "gray20"),
           dotchart_fx(lpe, n_row, "gray20"),
-          barchart_fx(lpe_method), ncol=3, nrow=5)
+          barchart_fx(lpe_method), ncol=3, nrow=3)
 ```
 
-*Fig 9. Data exploration of response (index, red) and predictor (black) DYNAMIC variables to be considered for calibration. Factors have been re-coded where appropriate as integer values, where 1 is the smallest/lowest factor value and values increase as factor level values increase. For example, bankful=1 is 0-25% and bankfull=4 is 75-100%. Water vis=1 is 0.25-0.5 and water vis=4 is 3.0-bottom.*
+<font size="2"> *Fig A2.1. Data exploration of response (index, red) and predictor (black) DYNAMIC variables to be considered for calibration. Factors have been re-coded where appropriate as integer values, where 1 is the smallest/lowest factor value and values increase as factor level values increase. For example, bankful=1 is 0-25% and bankfull=4 is 75-100%. Water vis=1 is 0.25-0.5 and water vis=4 is 3.0-bottom.* </font>
 
 <br>
 
-Some outliers exist in the dynamic variables. For example, one data point of discharge > 1000 cms. In addition, some variables have unbalanced clusters of observations (e.g., water visibility, water clarity, size, brightness; Fig 9). Recall too that some of these values are MNAR (see Section 0 above). 
+Some outliers exist in the dynamic variables. For example, one data point of discharge > 1000 cms. In addition, some variables have unbalanced clusters of observations (e.g., water visibility, water clarity, size, brightness; Fig A2.1). Recall too that some of these values are MNAR (see Appendix 1 above). 
 
 <br> 
 
@@ -497,39 +1058,11 @@ Some outliers exist in the dynamic variables. For example, one data point of dis
 
 <br>
 
-### 1.2. Multicollinearity ### 
+### Appendix 3: Multicollinearity (Step 2 Zuur) ### 
+
+----------------
 
 *A.2.2 Step 2: Multicollinearity in Zuur et al 2009.*
-
-```{r}
-# FUNCTIONS FOR THIS SECTION: 
-
-#-------- Pairs plot functions
-# Function for scaled correlation coefficient text in upper panels
-panel.cor.fx <- function(x, y, digits=2, prefix="", cex.cor, ...)
-{
-  usr = par("usr"); on.exit(par(usr))
-  par(usr = c(0, 1, 0, 1))
-  r = cor(x, y,use="na.or.complete")
-  txt = format(c(r, 0.123456789), digits=digits)[1]
-  txt = paste(prefix, txt, sep="")
-  if(missing(cex.cor)) cex.cor = 0.8/strwidth(txt)
-  text(0.5, 0.5, txt, cex=ifelse(r<0.3 & r>-0.3, 0.7, r*2))#cex.cor * r)    (r^2)*2.5
-}
-
-# Function for data histograms on diagonal
-panel.hist.fx <- function(x, ...)
-{
-    usr <- par("usr"); on.exit(par(usr))
-    par(usr = c(usr[1:2], 0, 1.5) )
-    h <- hist(x, plot = FALSE)
-    breaks <- h$breaks; nB <- length(breaks)
-    y <- h$counts; y <- y/max(y)
-    rect(breaks[-nB], 0, breaks[-1], y, col = "blue", ...)
-}
-```
-
-<br>
 
 List of variables of interest to examine for collinearity: 
 
@@ -558,16 +1091,17 @@ colnames(z) <- c("index", "stab", "size", "clarity", "canopy", "LWD", "sub_sh",
                  "flow", "lpe", "lpe_meth")
 ```
 
-Examination of continuous variables indicates collinearity between some variables (defined roughly as *r*>0.6; Figure 10). In the initial global model, VIF scores are exceptionally high for several variables (Table 1a). Step-wise variable removal based on highest VIF values indicates that the best combination of explanatory variables to reduce multicollinearity moving forward is: OE, discharge, water visibility, LPE, and LPE method; i.e., removing bankfull and stream size (Table 1b and c). 
+Examination of continuous variables indicates collinearity between some variables (defined roughly as *r*>0.6; Figure A3.1). In the initial global model, VIF scores are exceptionally high for several variables (Table 1a). Step-wise variable removal based on highest VIF values indicates that the best combination of explanatory variables to reduce multicollinearity moving forward is: OE, discharge, water visibility, LPE, and LPE method; i.e., removing bankfull and stream size (Table A3.1). 
 
 ```{r echo=F, warning=F, message=F}
 pairs(z, lower.panel=panel.smooth, upper.panel=panel.cor.fx, diag.panel=panel.hist.fx, cex=1, pch=16)
 ```
 
-*Fig 10. Pairs plot for variables indicating level of collinearity between each variable pairing. Histograms of data observations given on the diagonal. Smoothed lines (red) generated using default loess smoother. No data transformations. Ordinal categorical variables recoded as integers for purposes of plotting.*
+<font size="2"> *Fig A3.1. Pairs plot for variables indicating level of collinearity between each variable pairing. Histograms of data observations given on the diagonal. Smoothed lines (red) generated using default loess smoother. No data transformations. Ordinal categorical variables recoded as integers for purposes of plotting.* </font>
 
+<br>
 
-Quantitative assessment of multicollinearity between all variables (including categorical) is presented in the following Variance Inflation Factor (VIF) tables (Table 2a-f). Step-wise removal of collinear variables results in the remaining 9 variables: system_stability, substrate_shade_recode, water_clarity_recode, bankfull_recode, brightness_recode, water_vis_recode, OE, lpe, lpe_method (Table 2f). Note that this is likely the maximum number of predictor variables that could be used in a multiple regression model, without random effects. The final model may need further reduced set of coviartes to avoid over-fitting.
+Quantitative assessment of multicollinearity between all variables (including categorical) is presented in the following Variance Inflation Factor (VIF) tables (Table A3.1a). Step-wise removal of collinear variables results in the remaining 9 variables: system_stability, substrate_shade_recode, water_clarity_recode, bankfull_recode, brightness_recode, water_vis_recode, OE, lpe, lpe_method. Note that this is likely the maximum number of predictor variables that could be used in a multiple regression model, without random effects. The final model may need further reduced set of coviartes to avoid over-fitting.
 
 ```{r include=F, echo=F}
 #--------- VIF tests - stepwise removal of highly collinear predictors (cutoff VIF>3)
@@ -576,103 +1110,43 @@ Quantitative assessment of multicollinearity between all variables (including ca
 vif.test.1 <- lm(index ~ system_stability + lwd_recode + substrate_shade_recode + size_recode + water_clarity_recode + bankfull_recode + brightness_recode + cc_recode + fish_vis_recode + water_vis_recode + OE + water_discharge + lpe + lpe_method, data=cal) 
 
 # no fish_vis
-vif.test.2 <- lm(index ~ system_stability + lwd_recode + substrate_shade_recode + size_recode + water_clarity_recode + bankfull_recode + brightness_recode + cc_recode + water_vis_recode + OE + water_discharge + lpe + lpe_method, data=cal)  
+#vif.test.2 <- lm(index ~ system_stability + lwd_recode + substrate_shade_recode + size_recode + water_clarity_recode + bankfull_recode + brightness_recode + cc_recode + water_vis_recode + OE + water_discharge + lpe + lpe_method, data=cal)  
 
 # no fish_vis, no LWD
-vif.test.3 <- lm(index ~ system_stability + substrate_shade_recode + size_recode + water_clarity_recode + bankfull_recode + brightness_recode + cc_recode + water_vis_recode + OE + water_discharge + lpe + lpe_method, data=cal) 
+#vif.test.3 <- lm(index ~ system_stability + substrate_shade_recode + size_recode + water_clarity_recode + bankfull_recode + brightness_recode + cc_recode + water_vis_recode + OE + water_discharge + lpe + lpe_method, data=cal) 
 
 # no fish_vis, no LWD, no cloud_cover
-vif.test.4 <- lm(index ~ system_stability + substrate_shade_recode + size_recode + water_clarity_recode + bankfull_recode + brightness_recode + water_vis_recode + OE + water_discharge + lpe + lpe_method, data=cal)
+#vif.test.4 <- lm(index ~ system_stability + substrate_shade_recode + size_recode + water_clarity_recode + bankfull_recode + brightness_recode + water_vis_recode + OE + water_discharge + lpe + lpe_method, data=cal)
 
 # no fish_vis, no LWD, no cloud_cover, no size
-vif.test.5 <- lm(index ~ system_stability + substrate_shade_recode + water_clarity_recode + bankfull_recode + brightness_recode + water_vis_recode + OE + water_discharge + lpe + lpe_method, data=cal)
+#vif.test.5 <- lm(index ~ system_stability + substrate_shade_recode + water_clarity_recode + bankfull_recode + brightness_recode + water_vis_recode + OE + water_discharge + lpe + lpe_method, data=cal)
 
 # no fish_vis, no LWD, no cloud_cover, no discharge
-vif.test.6 <- lm(index ~ system_stability + substrate_shade_recode + water_clarity_recode + bankfull_recode + brightness_recode + water_vis_recode + OE + lpe + lpe_method, data=cal)
+#vif.test.6 <- lm(index ~ system_stability + substrate_shade_recode + water_clarity_recode + bankfull_recode + brightness_recode + water_vis_recode + OE + lpe + lpe_method, data=cal)
 ```
 
 <br>
 
-*Table 2. Variance Inflation Factor (VIF) scores for various iterations of explanatory variable selection. Note Table 2a shows the VIF scores for the global model, followed by step-wise removals of the largest VIF factors (cut off GVIF>~3) Tables 1b-f.*
+<font size="2"> *Table A3.1. Variance Inflation Factor (VIF) scores for various iterations of explanatory variable selection. Note Table 2a shows the VIF scores for the global model; subsequent Tables 1b-f are not shown here but reveal VIF scores for step-wise removal of the variable with the highest VIF score each time.* </font>
 
 ```{r echo=F, warning=F, message=F}
-knitr::kable(cbind("Table"=c("2a", "(global)", rep("",12)), dplyr::as_data_frame(vif(vif.test.1), rownames = "Variable")))
-knitr::kable(cbind("Table"=c("2b", "(- fish_vis)", rep("",11)), dplyr::as_data_frame(vif(vif.test.2), rownames = "Variable")))
-knitr::kable(cbind("Table"=c("2c", "(- fish_vis)", "(- LWD)", rep("", 9)), dplyr::as_data_frame(vif(vif.test.3), rownames = "Variable")))
-knitr::kable(cbind("Table"=c("2d", "(- fish_vis)", "(- LWD)", "(- cloud)", rep("", 7)), dplyr::as_data_frame(vif(vif.test.4), rownames = "Variable")))
-knitr::kable(cbind("Table"=c("2e", "(- fish_vis)", "(- LWD)", "(- cloud)", "(-size)", rep("", 5)), dplyr::as_data_frame(vif(vif.test.5), rownames = "Variable")))
-knitr::kable(cbind("Table"=c("2f", "(- fish_vis)", "(- LWD)", "(- cloud)", "(-size)", "(-flow)", rep("", 3)), dplyr::as_data_frame(vif(vif.test.6), rownames = "Variable")))
+knitr::kable(cbind("Table"=c("A3.1a", "(global)", rep("",12)), dplyr::as_data_frame(vif(vif.test.1), rownames = "Variable")))
+#knitr::kable(cbind("Table"=c("2b", "(- fish_vis)", rep("",11)), dplyr::as_data_frame(vif(vif.test.2), rownames = "Variable")))
+#knitr::kable(cbind("Table"=c("2c", "(- fish_vis)", "(- LWD)", rep("", 9)), dplyr::as_data_frame(vif(vif.test.3), rownames = "Variable")))
+#knitr::kable(cbind("Table"=c("2d", "(- fish_vis)", "(- LWD)", "(- cloud)", rep("", 7)), dplyr::as_data_frame(vif(vif.test.4), rownames = "Variable")))
+#knitr::kable(cbind("Table"=c("2e", "(- fish_vis)", "(- LWD)", "(- cloud)", "(-size)", rep("", 5)), dplyr::as_data_frame(vif(vif.test.5), rownames = "Variable")))
+#knitr::kable(cbind("Table"=c("2f", "(- fish_vis)", "(- LWD)", "(- cloud)", "(-size)", "(-flow)", rep("", 3)), dplyr::as_data_frame(vif(vif.test.6), rownames = "Variable")))
 ```
 
 <br>
 
-#### Back to 1.0. Missing Values ####
-
-Returning back to assess relationships between missing values following VIF variable selection:   
-
-* System stability    
-* Substrate shade   
-* Water clarity   
-* Bankfull    
-* Brightness    
-* Water visibility    
-* OE    
-* LPE   
-* LPE method    
-
-Note that there are still patterns betweeen missing values, particularly between LPE method and environmentals. Missing values in bankfull and OE are more likely with xs-medium streams and at low water visibility. Understanding that relationship is less clear than that environmentals are more likely to be missing on ground surveys than aerial (Fig 11), but makes sense when you consider that environmentals were more common later in the time series, while small streams were surveyed earlier in the time series. 
-
-```{r include=F, echo=F}
-explanatory2 = c("system_stability", "substrate_shade_recode", "water_clarity_recode", "bankfull", "brightness", "water_vis", "OE", "lpe", "lpe_method")
-
-# Clearer visual summary of missing values. 
-cal %>% missing_plot(dependent, explanatory2)
-```
-
-```{r echo=F, warning=F, message=F}
-cal %>% missing_pairs(explanatory2, dependent, position="fill")
-```
-
-*Fig 12. Matrix relationships between missing cases for selected variables following VIF analysis. Missing values for each variable are indexed along the right-hand side vertical boxes, and the entire suite of observations for each variable are indexed along the top row of boxes. Gray indicates missing observations. Bars for categorical variables are represented as proportions of the total number of observations relating to missing values; e.g., 100% of the missing bankfull observations are related to 100% of the NA values in bankfull (as would be expected).*
-
-There are still patterns in missing values, although fewer than previously given step-wise removal of some variables in the VIF process.
-
-**Note this exercise still has not addressed the issue of MNAR values in dynamic variables. There are only n=27 cases of full observations. We will continue with this data exploration below, and then in section 2 fit models excluding variables with missing values.**
-
 <br>
 
-<br>
+### Appendix 4: Relationships between response and explanatory variables (Step 3 Zuur) ### 
 
-<br>
+----------------
 
-### 1.3. Relationships between response and explanatory variables ### 
-
-A.2.3 Step 3: Relationships in Zuur et al 2009. 
-
-```{r echo=F, include=F}
-# FUNCTIONS FOR THIS SECTION: 
-
-#-------- Custom relationship plot function
-relation.fx <- function(x_var, ann_x, ann_y, ann_lab, x_lab){
-  ggplot(cal%>%filter(!is.na(.data[[x_var]]), !grepl("CANT", .data[[x_var]])), aes(x=.data[[x_var]], y=index)) +
-    geom_point(shape=21, size=3, fill="gray70", alpha=0.6) +
-    geom_smooth(method = "lm", se=F, colour="green", size=1, alpha=0.5) +
-    geom_smooth(method = "gam", formula = y ~ s(x, bs = "cs"), se=F, colour="red", size=1, alpha=0.5) +
-    geom_smooth(method = "loess", se=F, colour="blue", size=1, alpha=0.5) +
-    annotate("text", x=ann_x, y=ann_y, label=ann_lab, fontface=2) +
-    labs(x=x_lab, y="Index") +
-    theme_bw() + 
-    theme(legend.position=c(0.1,0.85),
-      legend.background = element_rect(colour="black"),
-      legend.spacing.y = unit(0.1, "mm"),
-      legend.spacing.x = unit(0.1, "mm"),
-      legend.margin=margin(t=0.1, r=0.1, b=0.1, l=0.1, unit="cm"),
-      legend.key.size = unit(0.5, "cm"),
-      axis.text=element_text(colour="black"))
-  }
-```
-
-<br>
+*A.2.3 Step 3: Relationships in Zuur et al 2009.* 
 
 List of variables of interest to examine relationships (based on results of step 2 above):
 
@@ -698,208 +1172,28 @@ ggarrange(relation.fx("system_stability", 1, 17, "", "Stability"),
           relation.fx("lpe_method", "Aerial", 17, "", "LPE method"), common.legend = T)
 ```
 
-*Fig 13. Relationships between response variable (index) and explanatory variables (selected during step-wise VIF process) expressed using loess (blue) and cubic spline (red) smoothers, where possible. Note some smoothers require a minimum number of x-axis observations to created informed smoothers. Ordinal categorical variables were recoded as integers for purposes of smoothing.*
+<font size="2"> *Fig A4.1. Relationships between response variable (index) and explanatory variables (selected during step-wise VIF process) expressed using loess (blue) and cubic spline (red) smoothers, where possible. Note some smoothers require a minimum number of x-axis observations to created informed smoothers. Ordinal categorical variables were recoded as integers for purposes of smoothing.* </font>
 
 <br>
 
 <br>
 
-<br> 
+### Appendix 5: Univariate predictive models ###    
 
-### 2.2. - 2.3. Multicollinearity and relationships with only static variables ### 
+----------------
 
-*Step 2.0 Missing values not needed; Step 2.1 data exploration completed above in Step 1.1.*
-
-<br>
-
-#### **2.2. Multicollinearity** ####  
-
-```{r echo=F, include=F}
-# Pairs COR
-z.s <- cbind(cal$index, cal$system_stability, cal$size_recode, cal$water_clarity_recode, cal$substrate_shade_recode, cal$canopy_cover_recode, cal$lwd_recode, cal$lpe, cal$lpe_method)   
-colnames(z.s) <- c("index", "stability", "size", "water_clarity", "substrate_shade", "canopy_cover", "lwd", "lpe", "lpe_method")
-```
-
-Examination of static variables only indicates high collinearity between several variables (*r*>0.6; Figure 14). However, in the initial global model, VIF scores are exceptionally high for stream size (Table 3a). Step-wise variable removal based on highest VIF values indicates that the best combination of explanatory variables to reduce multicollinearity moving forward is: stability, water clarity, substrate shade, LWD, LPE, and LPE method; i.e., removing stream size (Table 3b). Note that canopy cover was not considered moving forward as it can vary annually with fires, pests, etc.
-
-```{r echo=F, warning=F, message=F}
-pairs(z.s, lower.panel=panel.smooth, upper.panel=panel.cor.fx, diag.panel=panel.hist.fx, cex=1, pch=16)
-```
-
-*Fig. 14. Pairs plot for STATIC variables indicating level of collinearity between each variable pairing. Histograms of data observations given on the diagonal. Smoothed lines (red) generated using default loess smoother. No data transformations. Ordinal categorical variables re-coded as integers for purposes of plotting.*
-
-```{r include=F, echo=F}
-#--------- VIF tests - stepwise removal of highly collinear predictors (cutoff VIF>3)
-### just static vars
-
-# global
-vif.stat.1 <- lm(index ~ system_stability + size_recode + water_clarity_recode + substrate_shade_recode + lwd_recode + lpe + lpe_method, data=cal)
-
-#no size
-vif.stat.2 <- lm(index ~ system_stability + water_clarity_recode + substrate_shade_recode + lwd_recode + lpe + lpe_method, data=cal)       
-```
-
-*Table 3. Variance Inflation Factor (VIF) scores for global models with STATIC variables. Note Table 3a shows the VIF scores for the global model, followed by step-wise removals of the largest VIF factors (cut off GVIF>~3) Table 3b.*
-
-```{r echo=F, warning=F, message=F}
-knitr::kable(cbind("Table"=c("3a", "(global)", rep("",5)), dplyr::as_data_frame(vif(vif.stat.1), rownames = "Variable")))
-knitr::kable(cbind("Table"=c("3b", "(global)", "(-size)", rep("",3)), dplyr::as_data_frame(vif(vif.stat.2), rownames = "Variable")))
-```
+Two examples of univariate models were created as an exercise to investigate whether single dynamic variables could better (or closely) produce expansion factors as well as the multivariate model. The two variables examined here briefly, OE and discharge ('flow') were chosen due to their promising linear relationship with indices. Out of all of the dynamic environmental variables, they have the least number of missing data points. 
 
 <br>
 
-#### **2.3 Relationships** ####  
+#### **Index ~ OE** ####    
 
-<br>
+The first model fit an exponential model as index~OE. It was fit using the *nls()* function. Initial parameters (alpha, beta, theta) were estimated using a linear model and data values. As above, the model was fit to 80% of the data, while 20% were reserved for model validation (sub-samples chosen randomly).
 
-There is evidence of relationships between the index and most variables (Fig 15). Smoothed lines are shown just for comparison to previous graphs and for future considerations with GAM use, but are not considered in this GLM exercise. 
-
-```{r echo=F, warning=F, message=F}
-ggarrange(relation.fx("system_stability", "Stable", 17, "", "Stability"),
-          relation.fx("water_clarity_recode", 1, 17, "", "Water clarity"), 
-          relation.fx("substrate_shade_recode", 1, 17, "", "Substrate shade"),
-          relation.fx("lwd_recode", 1, 17, "", "LWD"),
-          relation.fx("lpe", 1, 17, "", "LPE"),
-          relation.fx("lpe_method", 1, 17, "", "LPE method"),
-          common.legend = T)
+```{r eval=F}
+Model formula:
+model.exp.oe <- nls(index ~ alpha*exp(beta*OE) + theta , data=exp.test.oe.80, start=start)
 ```
-
-*Fig 15. Relationship plots for static variables following step-wise VIF variable removal. Lines are linear (green), cubic spline (red) and loess (blue) smoothing.*
-
-<br>
-
-<br>
-
-<br>
-
-### 4. Model development ###
-
-#### 4.1 GLMs ####
-
-The following is simply an exercise in model development; it does not address how to handle missing values. Previous work with GAMs appears to have issues with the level of predictors and effective degrees of freedom, models do not converge. Attempt with GLMM and static variables only.
-
-Based on the VIF process, the predictor variables are:    
-
-* Stability    
-* Water clarity   
-* substrate shade   
-* LWD   
-* LPE   
-* LPE method    
-
-To test this process, the model was fit to a random selection of 80% of the data and validated on a random 20%.
-
-```{r echo=F, include=F}
-# Randomly select 80% of data. MUST RUN set.seed(1) first for reproducibility! 
-# note addition of term from below - rescaling 'lpe'
-set.seed(1)
-cal.80 <- cal %>% 
-  slice_sample(prop=0.8) %>%
-  mutate(hpe = ifelse(is.na(hpe), hpe_escdb, hpe)) %>%
-  mutate(index = ifelse(is.na(index), hpe/lpe, index)) %>%
-  print()
-cal.80.names <- cal.80$usid
-
-# Filter remaining 20% of data for model validation
-cal.20 <- cal %>%
-  filter(!usid%in%c(cal.80.names)) %>%
-  print()
-```
-
-```{r echo=F, message=F, warning=F}
-#--------- FIT MODELS
-# model suggests re-scaling 'lpe' - see above code chunk 
-
-m.global <- glm(index ~ system_stability + large_woody_debris + water_clarity + substrate_shade + lpe_sc + lpe_method, data=cal.80,  family=Gamma(link="inverse"), na.action = "na.fail")
-summary(m.global)
-
-# Run all combinations of models
-m.dredge <- dredge(m.global, beta="none", rank="AICc")
-summary(m.dredge)
-
-
-#--------- EVALUATE MODELS
-# 1.1. TOP MODEL SET: dAIC<4  
-model.sel.dAIC4 <- get.models(m.dredge, subset=delta<4)                    # note essentially identical outcome with weight<=0.95
-
-# 1.2. MODEL-AVERAGE TOP MODEL SET: dAIC<4
-model.avg.dAIC4 <- model.avg(model.sel.dAIC4)
-
-# 2. TOP MODEL: dAIC=0
-model.sel.top <- get.models(m.dredge, subset=1)
-m.top <- glm(index ~ large_woody_debris + lpe_sc + system_stability + water_clarity, data=cal.80, family=Gamma(link="inverse"), na.action="na.fail")
-
-# Model tables for visualizing
-model.table.dAIC4 <- subset(m.dredge, delta<4)
-model.table.top <- subset(m.dredge, subset=1)
-
-
-#--------- PREDICT/VALIDATE MODEL
-# Based on model-averaged parameters: 
-cal.20$index_avgmod4 <- predict(model.avg.dAIC4, type="link", backtransform=T, full=F, cal.20)
-cal.20$index_topmod <- predict(m.top, type="link", backtransform=T, full=T, cal.20)
-```
-
-```{r echo=F, include=F}
-####### Plot background work, not shown ###
-# PLOT PREDICTIONS: INDICES AND POPULATION SIZES
-# "True" index (hpe/lpe) vs. modelled index - note top model performs poorly compared to model-averaged and is not shown
-index<-ggplot() +
-  geom_hline(yintercept = 1.8, colour="red") +
-  geom_bar(data=cal.20, aes(x=factor(n_row), y=index), stat="identity", colour="black", fill="white") +
-  geom_bar(data=cal.20, aes(x=factor(n_row), y=index_avgmod4), stat="identity", fill="blue", alpha=0.8, width=0.7) 
-
-# Implications of "true" population size (HPE) vs. resulting 1.8-expanded HPE and model-expanded HPE
-cal.20 <- cal.20 %>% 
-  mutate(pop_est_18 = lpe*1.8,
-         pop_est_model = lpe*index_avgmod4)
-
-pop_ests<-ggplot() +
-  geom_bar(data=cal.20, aes(x=factor(n_row), y=hpe), stat="identity", colour="gray70", fill="gray70") +
-  geom_bar(data=cal.20, aes(x=factor(n_row), y=pop_est_18), stat="identity", colour="black", fill="white", alpha=0.5, width=0.6) +
-  geom_bar(data=cal.20, aes(x=factor(n_row), y=pop_est_model), stat="identity", fill="blue", alpha=0.5, width=0.3) +
-  labs(y="Population estimate")
-
-
-# PLOT PREDICTIONS: DIFFERENCES BETWEEN ESTIMATES
-DBEs <- cal.20 %>%
-  dplyr::select(usid, n_row, hpe, pop_est_18, pop_est_model) %>%
-  pivot_longer(cols=c(pop_est_18, pop_est_model), names_to = "expand_type", values_to = "pop_est") %>%
-  mutate(difference=hpe-pop_est,
-         pDBE=(difference/hpe)*100) %>%
-  print()
-
-dDBE<-ggplot(DBEs, aes(x=factor(n_row), y=difference, group=expand_type, fill=expand_type)) +
-  geom_hline(yintercept = 0, colour="black") +
-  geom_bar(stat="identity", position="dodge", width=0.5) +
-  scale_fill_discrete(labels = c("lpe*1.8", "lpe*model estimated index")) +
-  labs(y="# over-est        # under-est", fill="expansion method")
-
-pDBE<-ggplot(DBEs, aes(x=factor(n_row), y=pDBE, group=expand_type, fill=expand_type)) +
-  geom_hline(yintercept = 0, colour="black") +
-  geom_bar(position="dodge", stat="identity", width=0.5) +
-  scale_fill_discrete(labels = c("lpe*1.8", "lpe*model estimated index")) +
-  labs(y="% over-est      % under-est", fill="expansion method")
-#######
-```
-
-```{r echo=F, warning=F, message=F}
-ggarrange(index, pop_ests, nrow=2)
-```
-
-*Fig 16. True index (HPE/LPE; white) and model-predicted index (blue) for verification dataset (20% of full dataset). Red line indicates 1.8 index.*
-
-```{r echo=F, warning=F, message=F}
-ggarrange(dDBE, pDBE, nrow=2)
-```
-
-*Fig 17. Discrepancy in a) number of fish and b) proportion of population between the 1.8-expanded population estimate and the model-estimated population estimate compared to the known HPE.*
-
-<br>
-
-#### 4.2. Exponential univariate ####
-
-**Index ~ OE**
 
 ```{r echo=F, include=F}
 exp.test.oe <- cal %>% 
@@ -928,39 +1222,55 @@ beta.0 <- coef(model.0)[2]
 # Starting parameters
 start <- list(alpha=alpha.0, beta=beta.0, theta=theta.0)
 model.exp.oe <- nls(index ~ alpha*exp(beta*OE) + theta , data=exp.test.oe.80, start=start)
+plot(model.exp.oe)
 predict(model.exp.oe)
 
 # Predict
 exp.test.oe.20$index_modelexp <- NA
 exp.test.oe.20$index_modelexp <- predict(model.exp.oe, newdata=exp.test.oe.20)
+
+
+#---------- PLOTS 
+# Plot fitted curve on data points 
+expoe<-ggplot(exp.test.oe.80, aes(x=OE, y=index)) +
+  geom_point(shape=21, colour="black", fill="white", size=2.5, stroke=1) +
+  geom_line(aes(y = predict(model.exp.oe)), size=1, colour="red") +
+  annotate(geom="text",x=20, y=17, label="A")
+
+# Population estimate from HPE, from *1.8 and from *model prediction 
+expoe.pop<-ggplot() +
+  geom_bar(data=exp.test.oe.20, aes(x=factor(n_row), y=hpe), stat="identity", colour="gray60", fill="gray60", width=0.6) +
+  geom_bar(data=exp.test.oe.20, aes(x=factor(n_row), y=(lpe*1.8)), stat="identity", colour="black", fill="gray70", alpha=0.5, width=0.5) +
+  geom_bar(data=exp.test.oe.20, aes(x=factor(n_row), y=(lpe*index_modelexp)), stat="identity", fill="blue", alpha=0.5, width=0.5) +
+  labs(y="Population estimate", x="Survey") +
+  annotate(geom="text",x=1, y=260000, label="B")
+
+# Predicted and observed indices
+#ggplot() +
+#  geom_bar(data=exp.test.oe.20, aes(x=factor(n_row), y=index), stat="identity", colour="black", fill="white") +
+#  geom_bar(data=exp.test.oe.20, aes(x=factor(n_row), y=index_modelexp), stat="identity", fill="blue", alpha=0.8, width=0.7) 
 ```
+
+The relationship is a declining exponential relationship between index and OE, where low OE produces a higher index, which intuitively makes sense (OE is the % of fish you think you can see in a survey) (Fig A5.1a). However, the population estimates derived from the model-predicted expansion factors barely out-performed the traditional *1.8 expansion, and in many cases severly over-estimated the population size (Fig A5.1a).
 
 ```{r echo=F, warning=F, message=F}
-# Plot fitted curve
-ggplot(exp.test.oe.80, aes(x=OE, y=index)) +
-     geom_point() +
-     geom_line(aes(y = predict(model.exp.oe)), size=1, colour="red")
+ggarrange(expoe, expoe.pop, ncol=2)
 ```
 
-*Fig 17. Index~OE with fitted exponential model.*
-
-```{r echo=F, warning=F, message=F}
-ggplot() +
-  geom_bar(data=exp.test.oe.20, aes(x=factor(n_row), y=index), stat="identity", colour="black", fill="white") +
-  geom_bar(data=exp.test.oe.20, aes(x=factor(n_row), y=index_modelexp), stat="identity", fill="blue", alpha=0.8, width=0.7) 
-
-ggplot() +
-  geom_bar(data=exp.test.oe.20, aes(x=factor(n_row), y=hpe), stat="identity", colour="gray70", fill="gray70") +
-  geom_bar(data=exp.test.oe.20, aes(x=factor(n_row), y=(lpe*1.8)), stat="identity", colour="black", fill="white", alpha=0.5, width=0.6) +
-  geom_bar(data=exp.test.oe.20, aes(x=factor(n_row), y=(lpe*index_modelexp)), stat="identity", fill="blue", alpha=0.5, width=0.3) +
-  labs(y="Population estimate")
-```
-
-*Fig 18. Comparison of a) known and exponential-model indices and b) resulting population estimates of 1.8-expanded (white) and model-expanded (blue) counts compared to known population estimate (gray).*
+<font size="2"> *Fig A5.1. a) Index~OE with fitted exponential model and b) Comparison of population estimates from the high-precision program (gray bars), the 1.8-expanded population estimate (white with black outline) and model-expanded population estimate (blue).*
 
 <br>
 
-**Index ~ flow**
+<br>
+
+#### **Index ~ Flow** ####    
+
+The other univariate exercise consisted of fitting a similar exponential model to the relationship of index~discharge (aka flow). The model formula is given below. As above, the model was fit to 80% of the data, while 20% were reserved for model validation (sub-samples chosen randomly). 
+
+```{r eval=F}
+Model formula:
+model.exp.flow <- nls(index ~ alpha*exp(beta*water_discharge) + theta, data=exp.test.flow.80, start=start)
+```
 
 ```{r echo=F, include=F}
 exp.test.flow <- cal %>% 
@@ -989,40 +1299,46 @@ beta.0 <- coef(model.0)[2]
 # Starting parameters
 start <- list(alpha=alpha.0, beta=beta.0, theta=theta.0)
 model.exp.flow <- nls(index ~ alpha*exp(beta*water_discharge) + theta, data=exp.test.flow.80, start=start)
+plot(model.exp.flow)
 predict(model.exp.flow)
 
 # Predict
 exp.test.flow.20$index_modelexp <- NA
 exp.test.flow.20$index_modelexp <- predict(model.exp.flow, newdata=exp.test.flow.20)
-```
 
-```{r echo=F, warning=F, message=F}
+
+#-------- PLOTS
 # Plot fitted curve
-ggplot(exp.test.flow.80, aes(x=water_discharge, y=index)) +
-  geom_point() +
-  geom_line(aes(y = predict(model.exp.flow)), size=1, colour="red")
+expfl<-ggplot(exp.test.flow.80, aes(x=water_discharge, y=index)) +
+  geom_point(shape=21, colour="black", fill="white", size=2.5, stroke=1) +
+  geom_line(aes(y = predict(model.exp.flow)), size=1, colour="red") +
+  annotate(geom="text",x=1, y=12, label="A")
+
+# Population estimate from HPE, from *1.8 and from *model prediction  
+expfl.pop<-ggplot() +
+  geom_bar(data=exp.test.flow.20, aes(x=factor(n_row), y=hpe), stat="identity", colour="gray60", fill="gray60", width=0.6) +
+  geom_bar(data=exp.test.flow.20, aes(x=factor(n_row), y=(lpe*1.8)), stat="identity", colour="black", fill="white", alpha=0.5, width=0.5) +
+  geom_bar(data=exp.test.flow.20, aes(x=factor(n_row), y=(lpe*index_modelexp)), stat="identity", fill="blue", alpha=0.5, width=0.5) +
+  labs(y="Population estimate", x="Survey") +
+  annotate(geom="text",x=1, y=450000, label="B")
+
+# Predicted vs. observed indices 
+#ggplot() +
+#  geom_bar(data=exp.test.flow.20, aes(x=factor(n_row), y=index), stat="identity", colour="black", fill="white") +
+#  geom_bar(data=exp.test.flow.20, aes(x=factor(n_row), y=index_modelexp), stat="identity", fill="blue", alpha=0.8, width=0.7) 
 ```
 
-*Fig 19. Index~flow with (poorly) fitted exponential model.*
+The relationship between index and OE is an increasing exponential relationship that appears to plateau around index=7 and flow=400-500cms. The relationship is strongly driven by one data point, which could pose issues for future model development (Fig A5.2a). The model performed poorly compared to the traditional 1.8-expansion, and frequently over-estimated the population size (Fig A5.2b).
 
 ```{r echo=F, warning=F, message=F}
-ggplot() +
-  geom_bar(data=exp.test.flow.20, aes(x=factor(n_row), y=index), stat="identity", colour="black", fill="white") +
-  geom_bar(data=exp.test.flow.20, aes(x=factor(n_row), y=index_modelexp), stat="identity", fill="blue", alpha=0.8, width=0.7) 
-
-ggplot() +
-  geom_bar(data=exp.test.flow.20, aes(x=factor(n_row), y=hpe), stat="identity", colour="gray70", fill="gray70") +
-  geom_bar(data=exp.test.flow.20, aes(x=factor(n_row), y=(lpe*1.8)), stat="identity", colour="black", fill="white", alpha=0.5, width=0.6) +
-  geom_bar(data=exp.test.flow.20, aes(x=factor(n_row), y=(lpe*index_modelexp)), stat="identity", fill="blue", alpha=0.5, width=0.3) +
-  labs(y="Population estimate")
+ggarrange(expfl, expfl.pop, ncol=2)
 ```
 
-*Fig 20. Comparison of a) known and exponential-model indices and b) resulting population estimates of 1.8-expanded (white) and model-expanded (blue) counts compared to known population estimate (gray).*
+<font size="2"> *Fig A5.2. a) Index~flow with (poorly) fitted exponential model and b) Comparison of population estimates from the high-precision program (gray), the 1.8-expanded population estimate (white with black outline), and the model-expanded population estimate (blue).* </font>
 
+<br>
 
-
-
-
+<br>
 
 
 
